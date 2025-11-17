@@ -46,6 +46,7 @@ interface Project {
   status: string;
   script: any; // Using any to handle Json type from Supabase
   created_at: string;
+  photos: string[] | null;
 }
 
 const Project = () => {
@@ -54,10 +55,35 @@ const Project = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
 
   useEffect(() => {
     loadProject();
   }, [id]);
+
+  useEffect(() => {
+    if (project?.photos && project.photos.length > 0) {
+      loadPhotoUrls();
+    }
+  }, [project?.photos]);
+
+  const loadPhotoUrls = async () => {
+    if (!project?.photos) return;
+
+    try {
+      const urls = await Promise.all(
+        project.photos.map(async (photoPath) => {
+          const { data } = await supabase.storage
+            .from('user-photos')
+            .createSignedUrl(photoPath, 3600); // 1 hour expiry
+          return data?.signedUrl || '';
+        })
+      );
+      setPhotoUrls(urls.filter(url => url));
+    } catch (error) {
+      console.error('Failed to load photo URLs:', error);
+    }
+  };
 
   const loadProject = async () => {
     try {
@@ -178,6 +204,31 @@ const Project = () => {
             <p className="text-muted-foreground text-lg">{project.description}</p>
           )}
         </div>
+
+        {/* User Photos */}
+        {photoUrls.length > 0 && (
+          <Card className="shadow-[var(--shadow-medium)] mb-8">
+            <CardHeader>
+              <CardTitle>Your Photos</CardTitle>
+              <CardDescription>
+                These photos will be used to create your personalized character avatar
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                {photoUrls.map((url, index) => (
+                  <div key={index} className="relative group">
+                    <img
+                      src={url}
+                      alt={`User photo ${index + 1}`}
+                      className="w-full h-32 object-cover rounded-lg border border-border"
+                    />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* No Script State */}
         {!project.script && (
