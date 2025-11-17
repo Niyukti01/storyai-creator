@@ -37,6 +37,7 @@ export type Database = {
       }
       projects: {
         Row: {
+          avatar: Json | null
           created_at: string
           description: string | null
           genre: string
@@ -49,6 +50,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          avatar?: Json | null
           created_at?: string
           description?: string | null
           genre: string
@@ -61,6 +63,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          avatar?: Json | null
           created_at?: string
           description?: string | null
           genre?: string
