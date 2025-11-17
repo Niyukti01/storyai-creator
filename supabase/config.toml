@@ -1,1 +1,7 @@
 project_id = "jehgwsthqsltndybqoce"
+
+[functions.generate-story-script]
+verify_jwt = true
+
+[functions.generate-avatar]
+verify_jwt = true

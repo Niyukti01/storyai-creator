@@ -209,10 +209,21 @@ const Project = () => {
         {photoUrls.length > 0 && (
           <Card className="shadow-[var(--shadow-medium)] mb-8">
             <CardHeader>
-              <CardTitle>Your Photos</CardTitle>
-              <CardDescription>
-                These photos will be used to create your personalized character avatar
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Your Photos</CardTitle>
+                  <CardDescription>
+                    These photos will be used to create your personalized character avatar
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => navigate(`/project/${id}/character`)}
+                  variant="outline"
+                  size="sm"
+                >
+                  Customize Character
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
