@@ -1,0 +1,285 @@
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
+import { ArrowLeft, Film, MessageSquare, Camera, Sparkles } from "lucide-react";
+
+interface Character {
+  name: string;
+  description: string;
+  personality: string;
+  role: string;
+}
+
+interface Dialogue {
+  character: string;
+  line: string;
+  emotion: string;
+}
+
+interface Scene {
+  scene_number: number;
+  setting: string;
+  description: string;
+  camera_angle?: string;
+  dialogue: Dialogue[];
+  action: string;
+}
+
+interface Script {
+  characters: Character[];
+  scenes: Scene[];
+  story_summary: string;
+  theme: string;
+  estimated_duration: string;
+}
+
+interface Project {
+  id: string;
+  title: string;
+  description: string | null;
+  genre: string;
+  status: string;
+  script: any; // Using any to handle Json type from Supabase
+  avatar: any;
+}
+
+const StoryboardPreview = () => {
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const [project, setProject] = useState<Project | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadProject();
+  }, [id]);
+
+  const loadProject = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate("/auth");
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error) throw error;
+      
+      if (!data.script) {
+        toast.error("No script found for this project");
+        navigate(`/project/${id}`);
+        return;
+      }
+      
+      setProject(data);
+    } catch (error: any) {
+      toast.error("Failed to load project");
+      navigate("/dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted flex items-center justify-center">
+        <Film className="h-12 w-12 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!project?.script) {
+    return null;
+  }
+
+  const script = project.script as Script;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted">
+      <div className="container max-w-7xl mx-auto p-6 space-y-8">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate(`/project/${id}`)}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                Storyboard Preview
+              </h1>
+              <p className="text-muted-foreground mt-1">{project.title}</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Badge variant="secondary" className="gap-2">
+              <Film className="h-3 w-3" />
+              {script.scenes.length} Scenes
+            </Badge>
+            <Badge variant="outline" className="gap-2">
+              <Sparkles className="h-3 w-3" />
+              {script.estimated_duration}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Story Overview */}
+        <Card className="border-2 shadow-lg">
+          <CardContent className="pt-6">
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">Story Summary</h3>
+                <p className="text-foreground">{script.story_summary}</p>
+              </div>
+              <Separator />
+              <div className="flex gap-6">
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-1">Theme</h3>
+                  <Badge variant="secondary">{script.theme}</Badge>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-muted-foreground mb-1">Genre</h3>
+                  <Badge variant="outline">{project.genre}</Badge>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Storyboard Grid */}
+        <div className="space-y-6">
+          <h2 className="text-2xl font-bold flex items-center gap-2">
+            <Film className="h-6 w-6 text-primary" />
+            Scene Breakdown
+          </h2>
+          
+          <div className="grid gap-8">
+            {script.scenes.map((scene, index) => (
+              <Card 
+                key={scene.scene_number} 
+                className="border-2 hover:border-primary transition-colors shadow-lg overflow-hidden"
+              >
+                <div className="bg-gradient-to-r from-primary/10 to-secondary/10 px-6 py-4 border-b">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
+                        {scene.scene_number}
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold">Scene {scene.scene_number}</h3>
+                        <p className="text-sm text-muted-foreground">{scene.setting}</p>
+                      </div>
+                    </div>
+                    {scene.camera_angle && (
+                      <Badge variant="outline" className="gap-2">
+                        <Camera className="h-3 w-3" />
+                        {scene.camera_angle}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                <CardContent className="p-6 space-y-6">
+                  {/* Scene Illustration Placeholder */}
+                  <div className="relative aspect-video bg-gradient-to-br from-muted/50 to-muted rounded-lg border-2 border-dashed border-border flex items-center justify-center overflow-hidden">
+                    <div className="text-center space-y-2">
+                      <Film className="h-12 w-12 text-muted-foreground mx-auto" />
+                      <p className="text-sm text-muted-foreground max-w-md px-4">
+                        {scene.description}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Scene Action */}
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Action</h4>
+                    <p className="text-foreground">{scene.action}</p>
+                  </div>
+
+                  <Separator />
+
+                  {/* Dialogue */}
+                  {scene.dialogue && scene.dialogue.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-medium flex items-center gap-2">
+                        <MessageSquare className="h-4 w-4 text-primary" />
+                        Dialogue
+                      </h4>
+                      <div className="space-y-3">
+                        {scene.dialogue.map((line, idx) => (
+                          <div 
+                            key={idx}
+                            className="bg-muted/50 rounded-lg p-4 border border-border"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                                <span className="text-xs font-bold text-primary">
+                                  {line.character.charAt(0).toUpperCase()}
+                                </span>
+                              </div>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-semibold text-sm">{line.character}</span>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {line.emotion}
+                                  </Badge>
+                                </div>
+                                <p className="text-foreground italic">"{line.line}"</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+
+                {/* Scene Transition Indicator */}
+                {index < script.scenes.length - 1 && (
+                  <div className="flex items-center justify-center py-4 bg-muted/30">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <div className="h-px w-12 bg-border"></div>
+                      <span className="font-medium">Transition</span>
+                      <div className="h-px w-12 bg-border"></div>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        {/* Generate Video CTA */}
+        <Card className="border-2 border-primary/20 bg-gradient-to-r from-primary/5 to-secondary/5">
+          <CardContent className="pt-6 text-center space-y-4">
+            <Film className="h-12 w-12 text-primary mx-auto" />
+            <div>
+              <h3 className="text-xl font-bold mb-2">Ready to Generate Your Animation?</h3>
+              <p className="text-muted-foreground">
+                Review your storyboard and proceed to generate the final animated video
+              </p>
+            </div>
+            <Button size="lg" className="gap-2">
+              <Sparkles className="h-5 w-5" />
+              Generate Animation
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+export default StoryboardPreview;
