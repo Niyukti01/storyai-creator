@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Sparkles, User } from "lucide-react";
+import { VoiceRecorder } from "@/components/VoiceRecorder";
 
 interface Avatar {
   imageUrl: string;
@@ -21,6 +22,7 @@ const CharacterCustomization = () => {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
   const [project, setProject] = useState<any>(null);
   const [avatar, setAvatar] = useState<Avatar | null>(null);
   
@@ -100,6 +102,47 @@ const CharacterCustomization = () => {
       toast.error(error.message || "Failed to generate avatar");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleVoiceRecording = async (audioBlob: Blob) => {
+    if (!id) return;
+    
+    setUploadingVoice(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const fileName = `${user.id}/${id}/voice-sample-${Date.now()}.webm`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('voice-samples')
+        .upload(fileName, audioBlob, {
+          contentType: 'audio/webm',
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('voice-samples')
+        .getPublicUrl(fileName);
+
+      const { error: updateError } = await supabase
+        .from('projects')
+        .update({ voice_sample_url: publicUrl })
+        .eq('id', id);
+
+      if (updateError) throw updateError;
+
+      await loadProject();
+      
+      toast.success("Voice sample saved! This will be used for character dialogue.");
+    } catch (error: any) {
+      console.error('Error uploading voice:', error);
+      toast.error(error.message || "Failed to save voice recording");
+    } finally {
+      setUploadingVoice(false);
     }
   };
 
@@ -287,6 +330,27 @@ const CharacterCustomization = () => {
                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse delay-75" />
                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse delay-150" />
                   <span className="ml-2 text-sm">AI is creating your character...</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Voice Recording</CardTitle>
+              <CardDescription>
+                Record a sentence in your voice. This will be used for AI voice cloning to create character dialogue throughout your movie.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <VoiceRecorder 
+                onRecordingComplete={handleVoiceRecording}
+                isUploading={uploadingVoice}
+              />
+              {project?.voice_sample_url && (
+                <div className="p-4 border rounded-lg bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-2">Current voice sample:</p>
+                  <audio src={project.voice_sample_url} controls className="w-full" />
                 </div>
               )}
             </CardContent>

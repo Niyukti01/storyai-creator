@@ -48,6 +48,7 @@ export type Database = {
           title: string
           updated_at: string
           user_id: string
+          voice_sample_url: string | null
         }
         Insert: {
           avatar?: Json | null
@@ -61,6 +62,7 @@ export type Database = {
           title: string
           updated_at?: string
           user_id: string
+          voice_sample_url?: string | null
         }
         Update: {
           avatar?: Json | null
@@ -74,6 +76,7 @@ export type Database = {
           title?: string
           updated_at?: string
           user_id?: string
+          voice_sample_url?: string | null
         }
         Relationships: []
       }
