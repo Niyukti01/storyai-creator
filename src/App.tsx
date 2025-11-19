@@ -10,6 +10,7 @@ import Create from "./pages/Create";
 import Project from "./pages/Project";
 import CharacterCustomization from "./pages/CharacterCustomization";
 import StoryboardPreview from "./pages/StoryboardPreview";
+import ScriptGenerator from "./pages/ScriptGenerator";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/auth" element={<Auth />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/create" element={<Create />} />
+          <Route path="/generate-script" element={<ScriptGenerator />} />
           <Route path="/project/:id" element={<Project />} />
           <Route path="/project/:id/character" element={<CharacterCustomization />} />
           <Route path="/project/:id/storyboard" element={<StoryboardPreview />} />
