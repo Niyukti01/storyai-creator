@@ -46,6 +46,9 @@ interface Project {
   status: string;
   script: any; // Using any to handle Json type from Supabase
   avatar: any;
+  video_url: string | null;
+  video_status: string | null;
+  voice_sample_url: string | null;
 }
 
 const StoryboardPreview = () => {
@@ -53,6 +56,7 @@ const StoryboardPreview = () => {
   const { id } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [generatingVideo, setGeneratingVideo] = useState(false);
 
   useEffect(() => {
     loadProject();
@@ -86,6 +90,35 @@ const StoryboardPreview = () => {
       navigate("/dashboard");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const generateVideo = async () => {
+    if (!project || !id) return;
+
+    setGeneratingVideo(true);
+    toast.loading("Generating your animation...", { id: "video-generation" });
+
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-video", {
+        body: { projectId: id },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success("Animation generated successfully!", { id: "video-generation" });
+        await loadProject(); // Reload to get updated video URL
+      } else {
+        throw new Error("Video generation failed");
+      }
+    } catch (error: any) {
+      console.error("Error generating video:", error);
+      toast.error(error.message || "Failed to generate animation", { 
+        id: "video-generation" 
+      });
+    } finally {
+      setGeneratingVideo(false);
     }
   };
 
@@ -266,15 +299,54 @@ const StoryboardPreview = () => {
           <CardContent className="pt-6 text-center space-y-4">
             <Film className="h-12 w-12 text-primary mx-auto" />
             <div>
-              <h3 className="text-xl font-bold mb-2">Ready to Generate Your Animation?</h3>
+              <h3 className="text-xl font-bold mb-2">
+                {project.video_url ? "Animation Generated!" : "Ready to Generate Your Animation?"}
+              </h3>
               <p className="text-muted-foreground">
-                Review your storyboard and proceed to generate the final animated video
+                {project.video_url 
+                  ? "Your animated short movie is ready to view"
+                  : "Review your storyboard and proceed to generate the final animated video"
+                }
               </p>
             </div>
-            <Button size="lg" className="gap-2">
-              <Sparkles className="h-5 w-5" />
-              Generate Animation
-            </Button>
+            
+            {project.video_url ? (
+              <div className="space-y-3">
+                <video 
+                  controls 
+                  className="w-full max-w-2xl mx-auto rounded-lg border-2 border-border shadow-lg"
+                  poster="/placeholder.svg"
+                >
+                  <source src={project.video_url} type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+                <div className="flex gap-2 justify-center">
+                  <Button 
+                    variant="outline" 
+                    size="lg"
+                    onClick={generateVideo}
+                    disabled={generatingVideo}
+                  >
+                    {generatingVideo ? "Regenerating..." : "Regenerate Video"}
+                  </Button>
+                  <Button size="lg" asChild>
+                    <a href={project.video_url} download>
+                      Download MP4
+                    </a>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button 
+                size="lg" 
+                className="gap-2"
+                onClick={generateVideo}
+                disabled={generatingVideo}
+              >
+                <Sparkles className="h-5 w-5" />
+                {generatingVideo ? "Generating..." : "Generate Animation"}
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
