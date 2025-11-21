@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { ArrowLeft, Film, MessageSquare, Camera, Sparkles } from "lucide-react";
+import { MusicSelector } from "@/components/MusicSelector";
+import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface Character {
   name: string;
@@ -49,6 +51,7 @@ interface Project {
   video_url: string | null;
   video_status: string | null;
   voice_sample_url: string | null;
+  music_track: any; // JSON data for selected music track
 }
 
 const StoryboardPreview = () => {
@@ -57,6 +60,7 @@ const StoryboardPreview = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
 
   useEffect(() => {
     loadProject();
@@ -85,11 +89,39 @@ const StoryboardPreview = () => {
       }
       
       setProject(data);
+      
+      // Load selected music if available
+      if (data.music_track && typeof data.music_track === 'object' && 'id' in data.music_track) {
+        const track = getMusicById(data.music_track.id as string);
+        if (track) {
+          setSelectedMusic(track);
+        }
+      }
     } catch (error: any) {
       toast.error("Failed to load project");
       navigate("/dashboard");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMusicSelect = async (track: MusicTrack) => {
+    if (!id) return;
+
+    setSelectedMusic(track);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ music_track: track as any })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      toast.success(`Selected "${track.name}" as background music`);
+    } catch (error: any) {
+      console.error("Error saving music selection:", error);
+      toast.error("Failed to save music selection");
     }
   };
 
@@ -190,6 +222,12 @@ const StoryboardPreview = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Music Selection */}
+        <MusicSelector 
+          selectedTrack={selectedMusic}
+          onSelectTrack={handleMusicSelect}
+        />
 
         {/* Storyboard Grid */}
         <div className="space-y-6">

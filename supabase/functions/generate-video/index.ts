@@ -134,22 +134,13 @@ serve(async (req) => {
       avatar: project.avatar,
       voiceSample: project.voice_sample_url,
       audioSegments,
+      musicTrack: project.music_track || null,
     }
 
     console.log('Video composition prepared')
-
-    // In a production implementation, you would:
-    // 1. Send this data to a video rendering service (Remotion, FFmpeg Cloud, etc.)
-    // 2. Poll for completion
-    // 3. Store the final video URL
-
-    // For now, we'll create a simple video URL placeholder
-    // In production, replace this with actual video generation service integration
-    
-    // Example: Using a video generation service
-    // const videoUrl = await renderVideo(videoComposition)
-
-    // Simulating video generation
+    if (project.music_track) {
+      console.log('Music track included in composition:', project.music_track)
+    }
     const mockVideoUrl = `https://placeholder-video.com/${projectId}-${Date.now()}.mp4`
 
     console.log('Video generation simulated, storing result...')
