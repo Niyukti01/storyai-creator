@@ -42,6 +42,7 @@ export type Database = {
           description: string | null
           genre: string
           id: string
+          music_track: Json | null
           photos: string[] | null
           script: Json | null
           status: string
@@ -59,6 +60,7 @@ export type Database = {
           description?: string | null
           genre: string
           id?: string
+          music_track?: Json | null
           photos?: string[] | null
           script?: Json | null
           status?: string
@@ -76,6 +78,7 @@ export type Database = {
           description?: string | null
           genre?: string
           id?: string
+          music_track?: Json | null
           photos?: string[] | null
           script?: Json | null
           status?: string
