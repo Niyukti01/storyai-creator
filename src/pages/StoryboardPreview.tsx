@@ -8,7 +8,14 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { ArrowLeft, Film, MessageSquare, Camera, Sparkles } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
+import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
+
+interface CharacterIllustration {
+  name: string;
+  description: string;
+  imageUrl?: string;
+}
 
 interface Character {
   name: string;
@@ -61,6 +68,7 @@ const StoryboardPreview = () => {
   const [loading, setLoading] = useState(true);
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
+  const [characters, setCharacters] = useState<CharacterIllustration[]>([]);
 
   useEffect(() => {
     loadProject();
@@ -97,6 +105,11 @@ const StoryboardPreview = () => {
           setSelectedMusic(track);
         }
       }
+
+      // Load character illustrations
+      if (data.avatar && typeof data.avatar === 'object' && 'characters' in data.avatar) {
+        setCharacters((data.avatar as any).characters || []);
+      }
     } catch (error: any) {
       toast.error("Failed to load project");
       navigate("/dashboard");
@@ -123,6 +136,10 @@ const StoryboardPreview = () => {
       console.error("Error saving music selection:", error);
       toast.error("Failed to save music selection");
     }
+  };
+
+  const handleCharactersUpdate = (updatedCharacters: CharacterIllustration[]) => {
+    setCharacters(updatedCharacters);
   };
 
   const generateVideo = async () => {
@@ -222,6 +239,15 @@ const StoryboardPreview = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Character Illustrations */}
+        <CharacterGenerator
+          projectId={id!}
+          script={script}
+          genre={project.genre}
+          existingCharacters={characters}
+          onCharactersUpdate={handleCharactersUpdate}
+        />
 
         {/* Music Selection */}
         <MusicSelector 
