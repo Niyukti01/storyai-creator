@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Film, MessageSquare, Camera, Sparkles } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
+import { SceneEditor } from "@/components/SceneEditor";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface CharacterIllustration {
@@ -69,6 +70,7 @@ const StoryboardPreview = () => {
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
   const [characters, setCharacters] = useState<CharacterIllustration[]>([]);
+  const [editedScript, setEditedScript] = useState<Script | null>(null);
 
   useEffect(() => {
     loadProject();
@@ -110,6 +112,11 @@ const StoryboardPreview = () => {
       if (data.avatar && typeof data.avatar === 'object' && 'characters' in data.avatar) {
         setCharacters((data.avatar as any).characters || []);
       }
+
+      // Initialize edited script
+      if (data.script) {
+        setEditedScript(data.script as any);
+      }
     } catch (error: any) {
       toast.error("Failed to load project");
       navigate("/dashboard");
@@ -140,6 +147,93 @@ const StoryboardPreview = () => {
 
   const handleCharactersUpdate = (updatedCharacters: CharacterIllustration[]) => {
     setCharacters(updatedCharacters);
+  };
+
+  const handleSceneUpdate = async (updatedScene: Scene) => {
+    if (!editedScript || !id) return;
+
+    const updatedScenes = editedScript.scenes.map((scene) =>
+      scene.scene_number === updatedScene.scene_number ? updatedScene : scene
+    );
+
+    const newScript = { ...editedScript, scenes: updatedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene updated successfully");
+    } catch (error: any) {
+      console.error("Error updating scene:", error);
+      toast.error("Failed to update scene");
+    }
+  };
+
+  const handleSceneDelete = async (sceneNumber: number) => {
+    if (!editedScript || !id) return;
+
+    const updatedScenes = editedScript.scenes
+      .filter((scene) => scene.scene_number !== sceneNumber)
+      .map((scene, index) => ({ ...scene, scene_number: index + 1 }));
+
+    const newScript = { ...editedScript, scenes: updatedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting scene:", error);
+      toast.error("Failed to delete scene");
+    }
+  };
+
+  const handleSceneReorder = async (sceneNumber: number, direction: "up" | "down") => {
+    if (!editedScript || !id) return;
+
+    const currentIndex = editedScript.scenes.findIndex(
+      (s) => s.scene_number === sceneNumber
+    );
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+    if (targetIndex < 0 || targetIndex >= editedScript.scenes.length) return;
+
+    const updatedScenes = [...editedScript.scenes];
+    [updatedScenes[currentIndex], updatedScenes[targetIndex]] = [
+      updatedScenes[targetIndex],
+      updatedScenes[currentIndex],
+    ];
+
+    // Renumber scenes
+    const renumberedScenes = updatedScenes.map((scene, index) => ({
+      ...scene,
+      scene_number: index + 1,
+    }));
+
+    const newScript = { ...editedScript, scenes: renumberedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene reordered successfully");
+    } catch (error: any) {
+      console.error("Error reordering scene:", error);
+      toast.error("Failed to reorder scene");
+    }
   };
 
   const generateVideo = async () => {
@@ -179,11 +273,11 @@ const StoryboardPreview = () => {
     );
   }
 
-  if (!project?.script) {
+  if (!project?.script || !editedScript) {
     return null;
   }
 
-  const script = project.script as Script;
+  const script = editedScript;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted">
@@ -262,98 +356,30 @@ const StoryboardPreview = () => {
             Scene Breakdown
           </h2>
           
-          <div className="grid gap-8">
+          <div className="grid gap-6">
             {script.scenes.map((scene, index) => (
-              <Card 
-                key={scene.scene_number} 
-                className="border-2 hover:border-primary transition-colors shadow-lg overflow-hidden"
-              >
-                <div className="bg-gradient-to-r from-primary/10 to-secondary/10 px-6 py-4 border-b">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold">
-                        {scene.scene_number}
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold">Scene {scene.scene_number}</h3>
-                        <p className="text-sm text-muted-foreground">{scene.setting}</p>
-                      </div>
-                    </div>
-                    {scene.camera_angle && (
-                      <Badge variant="outline" className="gap-2">
-                        <Camera className="h-3 w-3" />
-                        {scene.camera_angle}
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-
-                <CardContent className="p-6 space-y-6">
-                  {/* Scene Illustration Placeholder */}
-                  <div className="relative aspect-video bg-gradient-to-br from-muted/50 to-muted rounded-lg border-2 border-dashed border-border flex items-center justify-center overflow-hidden">
-                    <div className="text-center space-y-2">
-                      <Film className="h-12 w-12 text-muted-foreground mx-auto" />
-                      <p className="text-sm text-muted-foreground max-w-md px-4">
-                        {scene.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Scene Action */}
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Action</h4>
-                    <p className="text-foreground">{scene.action}</p>
-                  </div>
-
-                  <Separator />
-
-                  {/* Dialogue */}
-                  {scene.dialogue && scene.dialogue.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-medium flex items-center gap-2">
-                        <MessageSquare className="h-4 w-4 text-primary" />
-                        Dialogue
-                      </h4>
-                      <div className="space-y-3">
-                        {scene.dialogue.map((line, idx) => (
-                          <div 
-                            key={idx}
-                            className="bg-muted/50 rounded-lg p-4 border border-border"
-                          >
-                            <div className="flex items-start gap-3">
-                              <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                                <span className="text-xs font-bold text-primary">
-                                  {line.character.charAt(0).toUpperCase()}
-                                </span>
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-semibold text-sm">{line.character}</span>
-                                  <Badge variant="secondary" className="text-xs">
-                                    {line.emotion}
-                                  </Badge>
-                                </div>
-                                <p className="text-foreground italic">"{line.line}"</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-
-                {/* Scene Transition Indicator */}
-                {index < script.scenes.length - 1 && (
-                  <div className="flex items-center justify-center py-4 bg-muted/30">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <div className="h-px w-12 bg-border"></div>
-                      <span className="font-medium">Transition</span>
-                      <div className="h-px w-12 bg-border"></div>
-                    </div>
-                  </div>
-                )}
-              </Card>
+              <SceneEditor
+                key={scene.scene_number}
+                scene={scene}
+                onSave={handleSceneUpdate}
+                onDelete={
+                  script.scenes.length > 1
+                    ? () => handleSceneDelete(scene.scene_number)
+                    : undefined
+                }
+                onMoveUp={
+                  index > 0
+                    ? () => handleSceneReorder(scene.scene_number, "up")
+                    : undefined
+                }
+                onMoveDown={
+                  index < script.scenes.length - 1
+                    ? () => handleSceneReorder(scene.scene_number, "down")
+                    : undefined
+                }
+                isFirst={index === 0}
+                isLast={index === script.scenes.length - 1}
+              />
             ))}
           </div>
         </div>
