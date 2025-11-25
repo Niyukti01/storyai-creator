@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { ArrowLeft, Film, MessageSquare, Camera, Sparkles } from "lucide-react";
+import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
@@ -60,6 +61,9 @@ interface Project {
   video_status: string | null;
   voice_sample_url: string | null;
   music_track: any; // JSON data for selected music track
+  video_progress: number | null;
+  video_generation_started_at: string | null;
+  video_generation_cancelled: boolean | null;
 }
 
 const StoryboardPreview = () => {
@@ -74,6 +78,28 @@ const StoryboardPreview = () => {
 
   useEffect(() => {
     loadProject();
+
+    // Subscribe to realtime updates for progress tracking
+    const channel = supabase
+      .channel('project-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'projects',
+          filter: `id=eq.${id}`
+        },
+        (payload) => {
+          console.log('Project updated:', payload);
+          setProject(payload.new as Project);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [id]);
 
   const loadProject = async () => {
@@ -240,7 +266,7 @@ const StoryboardPreview = () => {
     if (!project || !id) return;
 
     setGeneratingVideo(true);
-    toast.loading("Generating your animation...", { id: "video-generation" });
+    toast.loading("Starting animation generation...", { id: "video-generation" });
 
     try {
       const { data, error } = await supabase.functions.invoke("generate-video", {
@@ -251,7 +277,9 @@ const StoryboardPreview = () => {
 
       if (data?.success) {
         toast.success("Animation generated successfully!", { id: "video-generation" });
-        await loadProject(); // Reload to get updated video URL
+        await loadProject();
+      } else if (data?.error === 'Generation cancelled by user') {
+        toast.info("Generation cancelled", { id: "video-generation" });
       } else {
         throw new Error("Video generation failed");
       }
@@ -263,6 +291,43 @@ const StoryboardPreview = () => {
     } finally {
       setGeneratingVideo(false);
     }
+  };
+
+  const cancelVideoGeneration = async () => {
+    if (!id) return;
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ video_generation_cancelled: true })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      toast.info("Cancelling generation...");
+    } catch (error: any) {
+      console.error("Error cancelling generation:", error);
+      toast.error("Failed to cancel generation");
+    }
+  };
+
+  const getEstimatedTimeRemaining = () => {
+    if (!project?.video_generation_started_at || !project?.video_progress) return null;
+
+    const startTime = new Date(project.video_generation_started_at).getTime();
+    const currentTime = new Date().getTime();
+    const elapsedMs = currentTime - startTime;
+    const progress = project.video_progress;
+
+    if (progress === 0 || progress === 100) return null;
+
+    const totalEstimatedMs = (elapsedMs / progress) * 100;
+    const remainingMs = totalEstimatedMs - elapsedMs;
+    const remainingSecs = Math.ceil(remainingMs / 1000);
+
+    if (remainingSecs < 60) return `${remainingSecs}s`;
+    const remainingMins = Math.ceil(remainingSecs / 60);
+    return `${remainingMins}m`;
   };
 
   if (loading) {
@@ -390,17 +455,49 @@ const StoryboardPreview = () => {
             <Film className="h-12 w-12 text-primary mx-auto" />
             <div>
               <h3 className="text-xl font-bold mb-2">
-                {project.video_url ? "Animation Generated!" : "Ready to Generate Your Animation?"}
+                {project.video_status === 'generating' 
+                  ? "Generating Your Animation..."
+                  : project.video_url 
+                  ? "Animation Generated!" 
+                  : "Ready to Generate Your Animation?"}
               </h3>
               <p className="text-muted-foreground">
-                {project.video_url 
+                {project.video_status === 'generating'
+                  ? "Please wait while we create your animated movie"
+                  : project.video_url 
                   ? "Your animated short movie is ready to view"
                   : "Review your storyboard and proceed to generate the final animated video"
                 }
               </p>
             </div>
+
+            {/* Progress Tracking */}
+            {project.video_status === 'generating' && (
+              <div className="space-y-3 max-w-md mx-auto">
+                <Progress value={project.video_progress || 0} className="h-3" />
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {project.video_progress || 0}% complete
+                  </span>
+                  {getEstimatedTimeRemaining() && (
+                    <span className="text-muted-foreground">
+                      ~{getEstimatedTimeRemaining()} remaining
+                    </span>
+                  )}
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={cancelVideoGeneration}
+                  className="gap-2"
+                >
+                  <XCircle className="h-4 w-4" />
+                  Cancel Generation
+                </Button>
+              </div>
+            )}
             
-            {project.video_url ? (
+            {project.video_url && project.video_status !== 'generating' ? (
               <div className="space-y-3">
                 <video 
                   controls 
@@ -426,17 +523,17 @@ const StoryboardPreview = () => {
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : project.video_status !== 'generating' ? (
               <Button 
                 size="lg" 
                 className="gap-2"
                 onClick={generateVideo}
-                disabled={generatingVideo}
+                disabled={generatingVideo || project.video_status === 'generating'}
               >
                 <Sparkles className="h-5 w-5" />
-                {generatingVideo ? "Generating..." : "Generate Animation"}
+                {generatingVideo ? "Starting..." : "Generate Animation"}
               </Button>
-            )}
+            ) : null}
           </CardContent>
         </Card>
       </div>
