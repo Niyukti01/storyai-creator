@@ -40,10 +40,15 @@ serve(async (req) => {
       throw new Error('Project does not have a script')
     }
 
-    // Update status to generating
+    // Update status to generating and initialize progress
     await supabase
       .from('projects')
-      .update({ video_status: 'generating' })
+      .update({ 
+        video_status: 'generating',
+        video_progress: 0,
+        video_generation_started_at: new Date().toISOString(),
+        video_generation_cancelled: false
+      })
       .eq('id', projectId)
 
     console.log('Starting video generation process...')
@@ -58,9 +63,40 @@ serve(async (req) => {
     const sceneImages: string[] = []
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
 
-    for (let i = 0; i < scenes.length; i++) {
+    const totalScenes = scenes.length
+    for (let i = 0; i < totalScenes; i++) {
+      // Check if generation was cancelled
+      const { data: currentProject } = await supabase
+        .from('projects')
+        .select('video_generation_cancelled')
+        .eq('id', projectId)
+        .single()
+
+      if (currentProject?.video_generation_cancelled) {
+        console.log('Video generation cancelled by user')
+        await supabase
+          .from('projects')
+          .update({ 
+            video_status: 'cancelled',
+            video_progress: 0
+          })
+          .eq('id', projectId)
+        
+        return new Response(
+          JSON.stringify({ success: false, error: 'Generation cancelled by user' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+
       const scene = scenes[i]
-      console.log(`Generating image for scene ${scene.scene_number}...`)
+      console.log(`Generating image for scene ${scene.scene_number} (${i + 1}/${totalScenes})...`)
+
+      // Update progress
+      const progress = Math.floor(((i + 1) / totalScenes) * 100)
+      await supabase
+        .from('projects')
+        .update({ video_progress: progress })
+        .eq('id', projectId)
 
       // Create prompt for scene illustration
       const imagePrompt = `Create a ${project.genre} style illustration for: ${scene.description}. Setting: ${scene.setting}. ${scene.action}. High quality, cinematic, detailed.`
@@ -151,6 +187,7 @@ serve(async (req) => {
       .update({
         video_url: mockVideoUrl,
         video_status: 'completed',
+        video_progress: 100,
         video_generated_at: new Date().toISOString(),
       })
       .eq('id', projectId)
@@ -184,7 +221,10 @@ serve(async (req) => {
         
         await supabase
           .from('projects')
-          .update({ video_status: 'failed' })
+          .update({ 
+            video_status: 'failed',
+            video_progress: 0
+          })
           .eq('id', projectId)
       }
     } catch (updateError) {

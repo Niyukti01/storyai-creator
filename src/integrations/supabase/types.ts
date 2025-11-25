@@ -50,6 +50,9 @@ export type Database = {
           updated_at: string
           user_id: string
           video_generated_at: string | null
+          video_generation_cancelled: boolean | null
+          video_generation_started_at: string | null
+          video_progress: number | null
           video_status: string | null
           video_url: string | null
           voice_sample_url: string | null
@@ -68,6 +71,9 @@ export type Database = {
           updated_at?: string
           user_id: string
           video_generated_at?: string | null
+          video_generation_cancelled?: boolean | null
+          video_generation_started_at?: string | null
+          video_progress?: number | null
           video_status?: string | null
           video_url?: string | null
           voice_sample_url?: string | null
@@ -86,6 +92,9 @@ export type Database = {
           updated_at?: string
           user_id?: string
           video_generated_at?: string | null
+          video_generation_cancelled?: boolean | null
+          video_generation_started_at?: string | null
+          video_progress?: number | null
           video_status?: string | null
           video_url?: string | null
           voice_sample_url?: string | null
