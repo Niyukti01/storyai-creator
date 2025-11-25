@@ -11,6 +11,7 @@ import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle } from "lucid
 import { MusicSelector } from "@/components/MusicSelector";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
+import { VoiceRecorder } from "@/components/VoiceRecorder";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface CharacterIllustration {
@@ -75,6 +76,7 @@ const StoryboardPreview = () => {
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack | null>(null);
   const [characters, setCharacters] = useState<CharacterIllustration[]>([]);
   const [editedScript, setEditedScript] = useState<Script | null>(null);
+  const [generatingVoice, setGeneratingVoice] = useState(false);
 
   useEffect(() => {
     loadProject();
@@ -173,6 +175,41 @@ const StoryboardPreview = () => {
 
   const handleCharactersUpdate = (updatedCharacters: CharacterIllustration[]) => {
     setCharacters(updatedCharacters);
+  };
+
+  const handleVoiceSampleUpdate = (url: string) => {
+    setProject(prev => prev ? { ...prev, voice_sample_url: url } : null);
+  };
+
+  const generateVoiceDialogue = async () => {
+    if (!id) return;
+
+    setGeneratingVoice(true);
+    toast.loading("Generating voice dialogue...", { id: "voice-generation" });
+
+    try {
+      const { data, error } = await supabase.functions.invoke("generate-voice-dialogue", {
+        body: { projectId: id },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success(`Generated ${data.audioCount} voice dialogue segments!`, { 
+          id: "voice-generation" 
+        });
+        await loadProject();
+      } else {
+        throw new Error(data?.error || "Voice generation failed");
+      }
+    } catch (error: any) {
+      console.error("Error generating voice dialogue:", error);
+      toast.error(error.message || "Failed to generate voice dialogue", { 
+        id: "voice-generation" 
+      });
+    } finally {
+      setGeneratingVoice(false);
+    }
   };
 
   const handleSceneUpdate = async (updatedScene: Scene) => {
@@ -413,6 +450,31 @@ const StoryboardPreview = () => {
           selectedTrack={selectedMusic}
           onSelectTrack={handleMusicSelect}
         />
+
+        {/* Voice Cloning */}
+        <VoiceRecorder
+          projectId={id!}
+          existingVoiceSampleUrl={project.voice_sample_url}
+          onVoiceSampleUpdate={handleVoiceSampleUpdate}
+        />
+
+        {project.voice_sample_url && (
+          <Card className="border-2 border-primary/20">
+            <CardContent className="pt-6 text-center">
+              <p className="text-sm text-muted-foreground mb-4">
+                Voice sample uploaded! Generate dialogue using your cloned voice.
+              </p>
+              <Button 
+                onClick={generateVoiceDialogue}
+                disabled={generatingVoice}
+                className="gap-2"
+              >
+                <Sparkles className="h-4 w-4" />
+                {generatingVoice ? "Generating Voice Dialogue..." : "Generate Voice Dialogue"}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Storyboard Grid */}
         <div className="space-y-6">

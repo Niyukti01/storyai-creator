@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowLeft, Sparkles, User } from "lucide-react";
-import { VoiceRecorder } from "@/components/VoiceRecorder";
+import { VoiceRecorderSimple } from "@/components/VoiceRecorderSimple";
 
 interface Avatar {
   imageUrl: string;
@@ -343,7 +343,7 @@ const CharacterCustomization = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <VoiceRecorder 
+              <VoiceRecorderSimple 
                 onRecordingComplete={handleVoiceRecording}
                 isUploading={uploadingVoice}
               />

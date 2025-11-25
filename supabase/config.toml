@@ -11,3 +11,6 @@ verify_jwt = true
 
 [functions.generate-character]
 verify_jwt = true
+
+[functions.generate-voice-dialogue]
+verify_jwt = true
