@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { MusicSelector } from "@/components/MusicSelector";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
+import { TimelineEditor } from "@/components/TimelineEditor";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface CharacterIllustration {
@@ -77,6 +78,8 @@ const StoryboardPreview = () => {
   const [characters, setCharacters] = useState<CharacterIllustration[]>([]);
   const [editedScript, setEditedScript] = useState<Script | null>(null);
   const [generatingVoice, setGeneratingVoice] = useState(false);
+  const [activeSceneNumber, setActiveSceneNumber] = useState<number | null>(null);
+  const sceneRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
 
   useEffect(() => {
     loadProject();
@@ -299,6 +302,47 @@ const StoryboardPreview = () => {
     }
   };
 
+  const handleTimelineReorder = async (fromIndex: number, toIndex: number) => {
+    if (!editedScript || !id) return;
+
+    const updatedScenes = [...editedScript.scenes];
+    const [movedScene] = updatedScenes.splice(fromIndex, 1);
+    updatedScenes.splice(toIndex, 0, movedScene);
+
+    // Renumber scenes
+    const renumberedScenes = updatedScenes.map((scene, index) => ({
+      ...scene,
+      scene_number: index + 1,
+    }));
+
+    const newScript = { ...editedScript, scenes: renumberedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene reordered successfully");
+    } catch (error: any) {
+      console.error("Error reordering scene:", error);
+      toast.error("Failed to reorder scene");
+    }
+  };
+
+  const scrollToScene = (sceneNumber: number) => {
+    const sceneElement = sceneRefs.current[sceneNumber];
+    if (sceneElement) {
+      sceneElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      setActiveSceneNumber(sceneNumber);
+      
+      // Reset active scene after animation
+      setTimeout(() => setActiveSceneNumber(null), 2000);
+    }
+  };
+
   const generateVideo = async () => {
     if (!project || !id) return;
 
@@ -476,6 +520,14 @@ const StoryboardPreview = () => {
           </Card>
         )}
 
+        {/* Timeline Editor */}
+        <TimelineEditor
+          scenes={script.scenes}
+          activeSceneNumber={activeSceneNumber || undefined}
+          onSceneClick={scrollToScene}
+          onSceneReorder={handleTimelineReorder}
+        />
+
         {/* Storyboard Grid */}
         <div className="space-y-6">
           <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -485,28 +537,32 @@ const StoryboardPreview = () => {
           
           <div className="grid gap-6">
             {script.scenes.map((scene, index) => (
-              <SceneEditor
+              <div
                 key={scene.scene_number}
-                scene={scene}
-                onSave={handleSceneUpdate}
-                onDelete={
-                  script.scenes.length > 1
-                    ? () => handleSceneDelete(scene.scene_number)
-                    : undefined
-                }
-                onMoveUp={
-                  index > 0
-                    ? () => handleSceneReorder(scene.scene_number, "up")
-                    : undefined
-                }
-                onMoveDown={
-                  index < script.scenes.length - 1
-                    ? () => handleSceneReorder(scene.scene_number, "down")
-                    : undefined
-                }
-                isFirst={index === 0}
-                isLast={index === script.scenes.length - 1}
-              />
+                ref={(el) => (sceneRefs.current[scene.scene_number] = el)}
+              >
+                <SceneEditor
+                  scene={scene}
+                  onSave={handleSceneUpdate}
+                  onDelete={
+                    script.scenes.length > 1
+                      ? () => handleSceneDelete(scene.scene_number)
+                      : undefined
+                  }
+                  onMoveUp={
+                    index > 0
+                      ? () => handleSceneReorder(scene.scene_number, "up")
+                      : undefined
+                  }
+                  onMoveDown={
+                    index < script.scenes.length - 1
+                      ? () => handleSceneReorder(scene.scene_number, "down")
+                      : undefined
+                  }
+                  isFirst={index === 0}
+                  isLast={index === script.scenes.length - 1}
+                />
+              </div>
             ))}
           </div>
         </div>
