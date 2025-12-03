@@ -14,6 +14,7 @@ import { SceneEditor } from "@/components/SceneEditor";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
 import { TimelineEditor } from "@/components/TimelineEditor";
 import { SubtitleGenerator } from "@/components/SubtitleGenerator";
+import { AnimationPreview } from "@/components/AnimationPreview";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface CharacterIllustration {
@@ -533,6 +534,15 @@ const StoryboardPreview = () => {
         <SubtitleGenerator
           projectId={id!}
           scenes={script.scenes}
+        />
+
+        {/* Animation Preview Player */}
+        <AnimationPreview
+          scenes={script.scenes}
+          characters={characters}
+          voiceDialogue={project.avatar?.voiceDialogue}
+          musicUrl={selectedMusic?.previewUrl}
+          projectTitle={project.title}
         />
 
         {/* Storyboard Grid */}
