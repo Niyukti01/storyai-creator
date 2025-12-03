@@ -13,6 +13,7 @@ import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
 import { TimelineEditor } from "@/components/TimelineEditor";
+import { SubtitleGenerator } from "@/components/SubtitleGenerator";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 
 interface CharacterIllustration {
@@ -526,6 +527,12 @@ const StoryboardPreview = () => {
           activeSceneNumber={activeSceneNumber || undefined}
           onSceneClick={scrollToScene}
           onSceneReorder={handleTimelineReorder}
+        />
+
+        {/* Subtitle Generator */}
+        <SubtitleGenerator
+          projectId={id!}
+          scenes={script.scenes}
         />
 
         {/* Storyboard Grid */}
