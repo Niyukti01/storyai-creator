@@ -241,6 +241,45 @@ const StoryboardPreview = () => {
     }
   };
 
+  const handleSceneDuplicate = async (sceneNumber: number) => {
+    if (!editedScript || !id) return;
+
+    const sceneIndex = editedScript.scenes.findIndex(
+      (s) => s.scene_number === sceneNumber
+    );
+    
+    if (sceneIndex === -1) return;
+
+    const sceneToDuplicate = editedScript.scenes[sceneIndex];
+    const duplicatedScene = {
+      ...JSON.parse(JSON.stringify(sceneToDuplicate)),
+      scene_number: sceneNumber + 1,
+    };
+
+    // Insert duplicated scene after the original
+    const updatedScenes = [
+      ...editedScript.scenes.slice(0, sceneIndex + 1),
+      duplicatedScene,
+      ...editedScript.scenes.slice(sceneIndex + 1),
+    ].map((scene, index) => ({ ...scene, scene_number: index + 1 }));
+
+    const newScript = { ...editedScript, scenes: updatedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene duplicated successfully");
+    } catch (error: any) {
+      console.error("Error duplicating scene:", error);
+      toast.error("Failed to duplicate scene");
+    }
+  };
+
   const handleSceneDelete = async (sceneNumber: number) => {
     if (!editedScript || !id) return;
 
@@ -558,7 +597,7 @@ const StoryboardPreview = () => {
                 key={scene.scene_number}
                 ref={(el) => (sceneRefs.current[scene.scene_number] = el)}
               >
-                <SceneEditor
+              <SceneEditor
                   scene={scene}
                   onSave={handleSceneUpdate}
                   onDelete={
@@ -566,6 +605,7 @@ const StoryboardPreview = () => {
                       ? () => handleSceneDelete(scene.scene_number)
                       : undefined
                   }
+                  onDuplicate={() => handleSceneDuplicate(scene.scene_number)}
                   onMoveUp={
                     index > 0
                       ? () => handleSceneReorder(scene.scene_number, "up")

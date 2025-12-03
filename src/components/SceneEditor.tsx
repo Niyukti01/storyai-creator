@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, GripVertical, Camera, MessageSquare } from "lucide-react";
+import { Pencil, Trash2, Plus, GripVertical, Camera, MessageSquare, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 interface Dialogue {
@@ -41,6 +41,7 @@ interface SceneEditorProps {
   scene: Scene;
   onSave: (scene: Scene) => void;
   onDelete?: () => void;
+  onDuplicate?: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   isFirst?: boolean;
@@ -77,6 +78,7 @@ export function SceneEditor({
   scene,
   onSave,
   onDelete,
+  onDuplicate,
   onMoveUp,
   onMoveDown,
   isFirst,
@@ -164,15 +166,27 @@ export function SceneEditor({
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsEditing(true)}
+                title="Edit scene"
               >
                 <Pencil className="h-4 w-4" />
               </Button>
+              {onDuplicate && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onDuplicate}
+                  title="Duplicate scene"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              )}
               {onDelete && (
                 <Button
                   variant="ghost"
                   size="icon"
                   onClick={onDelete}
                   className="text-destructive hover:text-destructive"
+                  title="Delete scene"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
