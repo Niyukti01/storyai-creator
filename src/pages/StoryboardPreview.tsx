@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
+import { StoryboardPDFExport } from "@/components/StoryboardPDFExport";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
@@ -582,6 +583,17 @@ const StoryboardPreview = () => {
           voiceDialogue={project.avatar?.voiceDialogue}
           musicUrl={selectedMusic?.previewUrl}
           projectTitle={project.title}
+        />
+
+        {/* PDF Export */}
+        <StoryboardPDFExport
+          projectTitle={project.title}
+          genre={project.genre}
+          storySummary={script.story_summary}
+          theme={script.theme}
+          estimatedDuration={script.estimated_duration}
+          scenes={script.scenes}
+          characters={characters}
         />
 
         {/* Storyboard Grid */}
