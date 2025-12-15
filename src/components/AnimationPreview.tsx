@@ -274,6 +274,45 @@ export const AnimationPreview = ({
     setIsPlaying(false);
   };
 
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => !prev);
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      switch (e.key.toLowerCase()) {
+        case " ":
+          e.preventDefault();
+          togglePlay();
+          break;
+        case "arrowleft":
+          e.preventDefault();
+          skipToScene("prev");
+          break;
+        case "arrowright":
+          e.preventDefault();
+          skipToScene("next");
+          break;
+        case "m":
+          e.preventDefault();
+          toggleMute();
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleMute, currentSegment, scenes.length, currentTime, totalDuration, isPlaying]);
+
   // Get character illustration for current scene
   const getCurrentCharacterImage = () => {
     if (!currentSegment || currentSegment.type !== "dialogue") return null;
@@ -518,9 +557,14 @@ export const AnimationPreview = ({
         <audio ref={audioRef} />
 
         {/* Info */}
-        <div className="text-xs text-muted-foreground text-center pt-2 border-t">
-          This is a rough preview. Final rendering will include smooth animations, 
-          lip-sync, and full quality audio.
+        <div className="text-xs text-muted-foreground text-center pt-2 border-t space-y-1">
+          <p>
+            This is a rough preview. Final rendering will include smooth animations, 
+            lip-sync, and full quality audio.
+          </p>
+          <p className="font-medium">
+            Keyboard: Space = Play/Pause • ← → = Navigate Scenes • M = Mute
+          </p>
         </div>
       </CardContent>
     </Card>
