@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
 import { StoryboardPDFExport } from "@/components/StoryboardPDFExport";
+import { SceneTemplateLibrary } from "@/components/SceneTemplateLibrary";
 import { CharacterGenerator } from "@/components/CharacterGenerator";
 import { SceneEditor } from "@/components/SceneEditor";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
@@ -278,6 +279,42 @@ const StoryboardPreview = () => {
     } catch (error: any) {
       console.error("Error duplicating scene:", error);
       toast.error("Failed to duplicate scene");
+    }
+  };
+
+  const handleInsertTemplate = async (template: {
+    setting: string;
+    sceneDescription: string;
+    camera_angle: string;
+    dialogue: { character: string; line: string; emotion: string }[];
+    action: string;
+  }) => {
+    if (!editedScript || !id) return;
+
+    const newScene = {
+      scene_number: editedScript.scenes.length + 1,
+      setting: template.setting,
+      description: template.sceneDescription,
+      camera_angle: template.camera_angle,
+      dialogue: template.dialogue,
+      action: template.action,
+    };
+
+    const updatedScenes = [...editedScript.scenes, newScene];
+    const newScript = { ...editedScript, scenes: updatedScenes };
+    setEditedScript(newScript);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast.success("Scene template inserted successfully");
+    } catch (error: any) {
+      console.error("Error inserting template:", error);
+      toast.error("Failed to insert scene template");
     }
   };
 
@@ -598,10 +635,13 @@ const StoryboardPreview = () => {
 
         {/* Storyboard Grid */}
         <div className="space-y-6">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Film className="h-6 w-6 text-primary" />
-            Scene Breakdown
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <Film className="h-6 w-6 text-primary" />
+              Scene Breakdown
+            </h2>
+            <SceneTemplateLibrary onInsertTemplate={handleInsertTemplate} />
+          </div>
           
           <div className="grid gap-6">
             {script.scenes.map((scene, index) => (
