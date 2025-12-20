@@ -19,13 +19,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Pencil, Trash2, Plus, GripVertical, Camera, MessageSquare, Copy } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Pencil, Trash2, Plus, GripVertical, Camera, MessageSquare, Copy, StickyNote, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 interface Dialogue {
   character: string;
   line: string;
   emotion: string;
+}
+
+interface SceneNote {
+  id: string;
+  text: string;
+  type: "production" | "reminder" | "comment";
+  createdAt: string;
 }
 
 interface Scene {
@@ -35,6 +47,7 @@ interface Scene {
   camera_angle?: string;
   dialogue: Dialogue[];
   action: string;
+  notes?: SceneNote[];
 }
 
 interface SceneEditorProps {
@@ -74,6 +87,12 @@ const emotions = [
   "determined",
 ];
 
+const noteTypes = [
+  { value: "production", label: "Production", color: "bg-blue-500/20 text-blue-600 border-blue-500/30" },
+  { value: "reminder", label: "Reminder", color: "bg-amber-500/20 text-amber-600 border-amber-500/30" },
+  { value: "comment", label: "Comment", color: "bg-green-500/20 text-green-600 border-green-500/30" },
+] as const;
+
 export function SceneEditor({
   scene,
   onSave,
@@ -86,6 +105,9 @@ export function SceneEditor({
 }: SceneEditorProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editedScene, setEditedScene] = useState<Scene>(scene);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [newNoteText, setNewNoteText] = useState("");
+  const [newNoteType, setNewNoteType] = useState<"production" | "reminder" | "comment">("comment");
 
   const handleSave = () => {
     onSave(editedScene);
@@ -117,6 +139,39 @@ export function SceneEditor({
   const removeDialogue = (index: number) => {
     const newDialogue = editedScene.dialogue.filter((_, i) => i !== index);
     setEditedScene({ ...editedScene, dialogue: newDialogue });
+  };
+
+  const addNote = () => {
+    if (!newNoteText.trim()) return;
+    
+    const newNote: SceneNote = {
+      id: crypto.randomUUID(),
+      text: newNoteText.trim(),
+      type: newNoteType,
+      createdAt: new Date().toISOString(),
+    };
+    
+    const updatedScene = {
+      ...scene,
+      notes: [...(scene.notes || []), newNote],
+    };
+    
+    onSave(updatedScene);
+    setNewNoteText("");
+    toast.success("Note added successfully");
+  };
+
+  const removeNote = (noteId: string) => {
+    const updatedScene = {
+      ...scene,
+      notes: (scene.notes || []).filter((n) => n.id !== noteId),
+    };
+    onSave(updatedScene);
+    toast.success("Note removed");
+  };
+
+  const getNoteTypeStyle = (type: string) => {
+    return noteTypes.find((t) => t.value === type)?.color || noteTypes[2].color;
   };
 
   return (
@@ -239,6 +294,101 @@ export function SceneEditor({
               </div>
             </div>
           )}
+
+          {/* Scene Notes Section */}
+          <Collapsible open={notesOpen} onOpenChange={setNotesOpen}>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                className="w-full justify-between p-0 h-auto hover:bg-transparent"
+              >
+                <h4 className="text-sm font-medium flex items-center gap-2">
+                  <StickyNote className="h-4 w-4 text-amber-500" />
+                  Production Notes
+                  {scene.notes && scene.notes.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {scene.notes.length}
+                    </Badge>
+                  )}
+                </h4>
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${notesOpen ? "rotate-180" : ""}`}
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3 space-y-3">
+              {/* Existing Notes */}
+              {scene.notes && scene.notes.length > 0 && (
+                <div className="space-y-2">
+                  {scene.notes.map((note) => (
+                    <div
+                      key={note.id}
+                      className={`rounded-lg p-3 border ${getNoteTypeStyle(note.type)}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge variant="outline" className="text-xs capitalize">
+                              {note.type}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(note.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-sm">{note.text}</p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => removeNote(note.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add New Note */}
+              <div className="space-y-2 pt-2 border-t">
+                <div className="flex gap-2">
+                  <Select
+                    value={newNoteType}
+                    onValueChange={(v) => setNewNoteType(v as typeof newNoteType)}
+                  >
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {noteTypes.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Textarea
+                    value={newNoteText}
+                    onChange={(e) => setNewNoteText(e.target.value)}
+                    placeholder="Add a production note, reminder, or comment..."
+                    className="flex-1 min-h-[60px]"
+                    rows={2}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={addNote}
+                  disabled={!newNoteText.trim()}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Note
+                </Button>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </CardContent>
       </Card>
 

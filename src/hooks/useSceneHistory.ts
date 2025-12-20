@@ -1,5 +1,12 @@
 import { useState, useCallback } from "react";
 
+interface SceneNote {
+  id: string;
+  text: string;
+  type: "production" | "reminder" | "comment";
+  createdAt: string;
+}
+
 interface Scene {
   scene_number: number;
   setting: string;
@@ -7,6 +14,7 @@ interface Scene {
   camera_angle?: string;
   dialogue: { character: string; line: string; emotion: string }[];
   action: string;
+  notes?: SceneNote[];
 }
 
 interface HistoryState {
