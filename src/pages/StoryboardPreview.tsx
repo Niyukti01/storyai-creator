@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle } from "lucide-react";
+import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle, Undo2, Redo2 } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
 import { StoryboardPDFExport } from "@/components/StoryboardPDFExport";
 import { SceneTemplateLibrary } from "@/components/SceneTemplateLibrary";
@@ -18,6 +19,7 @@ import { TimelineEditor } from "@/components/TimelineEditor";
 import { SubtitleGenerator } from "@/components/SubtitleGenerator";
 import { AnimationPreview } from "@/components/AnimationPreview";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
+import { useSceneHistory } from "@/hooks/useSceneHistory";
 
 interface CharacterIllustration {
   name: string;
@@ -84,6 +86,17 @@ const StoryboardPreview = () => {
   const [generatingVoice, setGeneratingVoice] = useState(false);
   const [activeSceneNumber, setActiveSceneNumber] = useState<number | null>(null);
   const sceneRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
+  
+  // Scene history for undo/redo
+  const {
+    scenes: historyScenes,
+    setScenes: setHistoryScenes,
+    undo,
+    redo,
+    reset: resetHistory,
+    canUndo,
+    canRedo,
+  } = useSceneHistory([]);
 
   useEffect(() => {
     loadProject();
@@ -148,9 +161,11 @@ const StoryboardPreview = () => {
         setCharacters((data.avatar as any).characters || []);
       }
 
-      // Initialize edited script
+      // Initialize edited script and history
       if (data.script) {
-        setEditedScript(data.script as any);
+        const scriptData = data.script as any;
+        setEditedScript(scriptData);
+        resetHistory(scriptData.scenes || []);
       }
     } catch (error: any) {
       toast.error("Failed to load project");
@@ -228,6 +243,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: updatedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(updatedScenes);
 
     try {
       const { error } = await supabase
@@ -267,6 +283,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: updatedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(updatedScenes);
 
     try {
       const { error } = await supabase
@@ -303,6 +320,7 @@ const StoryboardPreview = () => {
     const updatedScenes = [...editedScript.scenes, newScene];
     const newScript = { ...editedScript, scenes: updatedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(updatedScenes);
 
     try {
       const { error } = await supabase
@@ -327,6 +345,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: updatedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(updatedScenes);
 
     try {
       const { error } = await supabase
@@ -366,6 +385,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: renumberedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(renumberedScenes);
 
     try {
       const { error } = await supabase
@@ -396,6 +416,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: renumberedScenes };
     setEditedScript(newScript);
+    setHistoryScenes(renumberedScenes);
 
     try {
       const { error } = await supabase
@@ -421,6 +442,86 @@ const StoryboardPreview = () => {
       setTimeout(() => setActiveSceneNumber(null), 2000);
     }
   };
+
+  // Undo handler - restore previous state
+  const handleUndo = useCallback(async () => {
+    if (!canUndo || !editedScript || !id) return;
+    
+    undo();
+  }, [canUndo, editedScript, id, undo]);
+
+  // Redo handler - restore next state
+  const handleRedo = useCallback(async () => {
+    if (!canRedo || !editedScript || !id) return;
+    
+    redo();
+  }, [canRedo, editedScript, id, redo]);
+
+  // Sync history changes to editedScript and database
+  useEffect(() => {
+    if (!editedScript || !id || historyScenes.length === 0) return;
+    
+    // Check if scenes actually changed (avoid infinite loops)
+    if (JSON.stringify(editedScript.scenes) === JSON.stringify(historyScenes)) return;
+
+    const newScript = { ...editedScript, scenes: historyScenes };
+    setEditedScript(newScript);
+
+    // Persist to database
+    const saveToDb = async () => {
+      try {
+        const { error } = await supabase
+          .from("projects")
+          .update({ script: newScript as any })
+          .eq("id", id);
+
+        if (error) throw error;
+      } catch (error: any) {
+        console.error("Error syncing undo/redo:", error);
+      }
+    };
+
+    saveToDb();
+  }, [historyScenes]);
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      // Undo: Ctrl+Z or Cmd+Z
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (canUndo) {
+          handleUndo();
+          toast.success("Undo successful");
+        }
+        return;
+      }
+
+      // Redo: Ctrl+Shift+Z, Cmd+Shift+Z, Ctrl+Y, or Cmd+Y
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) ||
+        ((e.ctrlKey || e.metaKey) && e.key === "y")
+      ) {
+        e.preventDefault();
+        if (canRedo) {
+          handleRedo();
+          toast.success("Redo successful");
+        }
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canUndo, canRedo, handleUndo, handleRedo]);
 
   const generateVideo = async () => {
     if (!project || !id) return;
@@ -524,15 +625,61 @@ const StoryboardPreview = () => {
               <p className="text-muted-foreground mt-1">{project.title}</p>
             </div>
           </div>
-          <div className="flex gap-2">
-            <Badge variant="secondary" className="gap-2">
-              <Film className="h-3 w-3" />
-              {script.scenes.length} Scenes
-            </Badge>
-            <Badge variant="outline" className="gap-2">
-              <Sparkles className="h-3 w-3" />
-              {script.estimated_duration}
-            </Badge>
+          <div className="flex items-center gap-3">
+            {/* Undo/Redo Buttons */}
+            <TooltipProvider>
+              <div className="flex gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        handleUndo();
+                        if (canUndo) toast.success("Undo successful");
+                      }}
+                      disabled={!canUndo}
+                      className="h-9 w-9"
+                    >
+                      <Undo2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Undo (Ctrl+Z)</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        handleRedo();
+                        if (canRedo) toast.success("Redo successful");
+                      }}
+                      disabled={!canRedo}
+                      className="h-9 w-9"
+                    >
+                      <Redo2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Redo (Ctrl+Shift+Z)</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
+            
+            <div className="flex gap-2">
+              <Badge variant="secondary" className="gap-2">
+                <Film className="h-3 w-3" />
+                {script.scenes.length} Scenes
+              </Badge>
+              <Badge variant="outline" className="gap-2">
+                <Sparkles className="h-3 w-3" />
+                {script.estimated_duration}
+              </Badge>
+            </div>
           </div>
         </div>
 
