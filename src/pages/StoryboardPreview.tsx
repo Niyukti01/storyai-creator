@@ -40,6 +40,13 @@ interface Dialogue {
   emotion: string;
 }
 
+interface SceneNote {
+  id: string;
+  text: string;
+  type: "production" | "reminder" | "comment";
+  createdAt: string;
+}
+
 interface Scene {
   scene_number: number;
   setting: string;
@@ -47,6 +54,7 @@ interface Scene {
   camera_angle?: string;
   dialogue: Dialogue[];
   action: string;
+  notes?: SceneNote[];
 }
 
 interface Script {
