@@ -8,7 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle, Undo2, Redo2 } from "lucide-react";
+import { ArrowLeft, Film, MessageSquare, Camera, Sparkles, XCircle, Undo2, Redo2, Share2 } from "lucide-react";
 import { MusicSelector } from "@/components/MusicSelector";
 import { StoryboardPDFExport } from "@/components/StoryboardPDFExport";
 import { SceneTemplateLibrary } from "@/components/SceneTemplateLibrary";
@@ -18,6 +18,7 @@ import { VoiceRecorder } from "@/components/VoiceRecorder";
 import { TimelineEditor } from "@/components/TimelineEditor";
 import { SubtitleGenerator } from "@/components/SubtitleGenerator";
 import { AnimationPreview } from "@/components/AnimationPreview";
+import { ShareProjectDialog } from "@/components/ShareProjectDialog";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 import { useSceneHistory } from "@/hooks/useSceneHistory";
 
@@ -80,6 +81,8 @@ interface Project {
   video_progress: number | null;
   video_generation_started_at: string | null;
   video_generation_cancelled: boolean | null;
+  share_token: string | null;
+  share_enabled: boolean | null;
 }
 
 const StoryboardPreview = () => {
@@ -677,6 +680,16 @@ const StoryboardPreview = () => {
                 </Tooltip>
               </div>
             </TooltipProvider>
+            
+            <ShareProjectDialog
+              projectId={project.id}
+              projectTitle={project.title}
+              shareToken={project.share_token}
+              shareEnabled={project.share_enabled || false}
+              onShareUpdate={(token, enabled) => {
+                setProject(prev => prev ? { ...prev, share_token: token, share_enabled: enabled } : null);
+              }}
+            />
             
             <div className="flex gap-2">
               <Badge variant="secondary" className="gap-2">

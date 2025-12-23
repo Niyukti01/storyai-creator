@@ -11,6 +11,7 @@ import Project from "./pages/Project";
 import CharacterCustomization from "./pages/CharacterCustomization";
 import StoryboardPreview from "./pages/StoryboardPreview";
 import ScriptGenerator from "./pages/ScriptGenerator";
+import SharedStoryboard from "./pages/SharedStoryboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,6 +31,7 @@ const App = () => (
           <Route path="/project/:id" element={<Project />} />
           <Route path="/project/:id/character" element={<CharacterCustomization />} />
           <Route path="/project/:id/storyboard" element={<StoryboardPreview />} />
+          <Route path="/shared/:token" element={<SharedStoryboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
