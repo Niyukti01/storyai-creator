@@ -45,6 +45,8 @@ export type Database = {
           music_track: Json | null
           photos: string[] | null
           script: Json | null
+          share_enabled: boolean | null
+          share_token: string | null
           status: string
           title: string
           updated_at: string
@@ -66,6 +68,8 @@ export type Database = {
           music_track?: Json | null
           photos?: string[] | null
           script?: Json | null
+          share_enabled?: boolean | null
+          share_token?: string | null
           status?: string
           title: string
           updated_at?: string
@@ -87,6 +91,8 @@ export type Database = {
           music_track?: Json | null
           photos?: string[] | null
           script?: Json | null
+          share_enabled?: boolean | null
+          share_token?: string | null
           status?: string
           title?: string
           updated_at?: string
