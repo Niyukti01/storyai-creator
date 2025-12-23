@@ -19,6 +19,7 @@ import { TimelineEditor } from "@/components/TimelineEditor";
 import { SubtitleGenerator } from "@/components/SubtitleGenerator";
 import { AnimationPreview } from "@/components/AnimationPreview";
 import { ShareProjectDialog } from "@/components/ShareProjectDialog";
+import { AutosaveIndicator, type SaveStatus } from "@/components/AutosaveIndicator";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 import { useSceneHistory } from "@/hooks/useSceneHistory";
 
@@ -96,6 +97,7 @@ const StoryboardPreview = () => {
   const [editedScript, setEditedScript] = useState<Script | null>(null);
   const [generatingVoice, setGeneratingVoice] = useState(false);
   const [activeSceneNumber, setActiveSceneNumber] = useState<number | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const sceneRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
   
   // Scene history for undo/redo
@@ -245,6 +247,26 @@ const StoryboardPreview = () => {
     }
   };
 
+  // Helper to save script with autosave status
+  const saveScript = async (newScript: Script) => {
+    if (!id) return;
+    
+    setSaveStatus("saving");
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .update({ script: newScript as any })
+        .eq("id", id);
+
+      if (error) throw error;
+      setSaveStatus("saved");
+    } catch (error: any) {
+      console.error("Error saving:", error);
+      setSaveStatus("error");
+      toast.error("Failed to save changes");
+    }
+  };
+
   const handleSceneUpdate = async (updatedScene: Scene) => {
     if (!editedScript || !id) return;
 
@@ -255,19 +277,7 @@ const StoryboardPreview = () => {
     const newScript = { ...editedScript, scenes: updatedScenes };
     setEditedScript(newScript);
     setHistoryScenes(updatedScenes);
-
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene updated successfully");
-    } catch (error: any) {
-      console.error("Error updating scene:", error);
-      toast.error("Failed to update scene");
-    }
+    await saveScript(newScript);
   };
 
   const handleSceneDuplicate = async (sceneNumber: number) => {
@@ -296,18 +306,8 @@ const StoryboardPreview = () => {
     setEditedScript(newScript);
     setHistoryScenes(updatedScenes);
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene duplicated successfully");
-    } catch (error: any) {
-      console.error("Error duplicating scene:", error);
-      toast.error("Failed to duplicate scene");
-    }
+    await saveScript(newScript);
+    toast.success("Scene duplicated");
   };
 
   const handleInsertTemplate = async (template: {
@@ -333,18 +333,8 @@ const StoryboardPreview = () => {
     setEditedScript(newScript);
     setHistoryScenes(updatedScenes);
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene template inserted successfully");
-    } catch (error: any) {
-      console.error("Error inserting template:", error);
-      toast.error("Failed to insert scene template");
-    }
+    await saveScript(newScript);
+    toast.success("Scene template inserted");
   };
 
   const handleSceneDelete = async (sceneNumber: number) => {
@@ -358,18 +348,8 @@ const StoryboardPreview = () => {
     setEditedScript(newScript);
     setHistoryScenes(updatedScenes);
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene deleted successfully");
-    } catch (error: any) {
-      console.error("Error deleting scene:", error);
-      toast.error("Failed to delete scene");
-    }
+    await saveScript(newScript);
+    toast.success("Scene deleted");
   };
 
   const handleSceneReorder = async (sceneNumber: number, direction: "up" | "down") => {
@@ -398,18 +378,7 @@ const StoryboardPreview = () => {
     setEditedScript(newScript);
     setHistoryScenes(renumberedScenes);
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene reordered successfully");
-    } catch (error: any) {
-      console.error("Error reordering scene:", error);
-      toast.error("Failed to reorder scene");
-    }
+    await saveScript(newScript);
   };
 
   const handleTimelineReorder = async (fromIndex: number, toIndex: number) => {
@@ -429,18 +398,7 @@ const StoryboardPreview = () => {
     setEditedScript(newScript);
     setHistoryScenes(renumberedScenes);
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .update({ script: newScript as any })
-        .eq("id", id);
-
-      if (error) throw error;
-      toast.success("Scene reordered successfully");
-    } catch (error: any) {
-      console.error("Error reordering scene:", error);
-      toast.error("Failed to reorder scene");
-    }
+    await saveScript(newScript);
   };
 
   const scrollToScene = (sceneNumber: number) => {
@@ -477,22 +435,7 @@ const StoryboardPreview = () => {
 
     const newScript = { ...editedScript, scenes: historyScenes };
     setEditedScript(newScript);
-
-    // Persist to database
-    const saveToDb = async () => {
-      try {
-        const { error } = await supabase
-          .from("projects")
-          .update({ script: newScript as any })
-          .eq("id", id);
-
-        if (error) throw error;
-      } catch (error: any) {
-        console.error("Error syncing undo/redo:", error);
-      }
-    };
-
-    saveToDb();
+    saveScript(newScript);
   }, [historyScenes]);
 
   // Keyboard shortcuts for undo/redo
@@ -690,6 +633,8 @@ const StoryboardPreview = () => {
                 setProject(prev => prev ? { ...prev, share_token: token, share_enabled: enabled } : null);
               }}
             />
+            
+            <AutosaveIndicator status={saveStatus} />
             
             <div className="flex gap-2">
               <Badge variant="secondary" className="gap-2">
