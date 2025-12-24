@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { VideoThumbnail } from "@/components/VideoThumbnail";
 
 interface Character {
   name: string;
@@ -390,14 +391,10 @@ const Project = () => {
                   <CardDescription>Your animated movie is ready to view and download</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <video 
-                    controls 
+                  <VideoThumbnail 
+                    src={project.video_url} 
                     className="w-full rounded-lg border border-border"
-                    poster="/placeholder.svg"
-                  >
-                    <source src={project.video_url} type="video/mp4" />
-                    Your browser does not support the video tag.
-                  </video>
+                  />
                   <div className="flex justify-center">
                     <Button asChild size="lg">
                       <a href={project.video_url} download>
