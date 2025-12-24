@@ -20,6 +20,7 @@ import { SubtitleGenerator } from "@/components/SubtitleGenerator";
 import { AnimationPreview } from "@/components/AnimationPreview";
 import { ShareProjectDialog } from "@/components/ShareProjectDialog";
 import { AutosaveIndicator, type SaveStatus } from "@/components/AutosaveIndicator";
+import { SceneSearch } from "@/components/SceneSearch";
 import { getMusicById, type MusicTrack } from "@/lib/musicLibrary";
 import { useSceneHistory } from "@/hooks/useSceneHistory";
 
@@ -98,6 +99,7 @@ const StoryboardPreview = () => {
   const [generatingVoice, setGeneratingVoice] = useState(false);
   const [activeSceneNumber, setActiveSceneNumber] = useState<number | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [searchQuery, setSearchQuery] = useState("");
   const sceneRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
   
   // Scene history for undo/redo
@@ -559,6 +561,32 @@ const StoryboardPreview = () => {
 
   const script = editedScript;
 
+  // Filter scenes based on search query
+  const filteredScenes = script.scenes.filter((scene) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    
+    // Search in setting
+    if (scene.setting?.toLowerCase().includes(query)) return true;
+    
+    // Search in description
+    if (scene.description?.toLowerCase().includes(query)) return true;
+    
+    // Search in dialogue
+    if (scene.dialogue?.some(d => 
+      d.line?.toLowerCase().includes(query) || 
+      d.character?.toLowerCase().includes(query)
+    )) return true;
+    
+    // Search in notes
+    if (scene.notes?.some(n => n.text?.toLowerCase().includes(query))) return true;
+    
+    // Search in action
+    if (scene.action?.toLowerCase().includes(query)) return true;
+    
+    return false;
+  });
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted">
       <div className="container max-w-7xl mx-auto p-6 space-y-8">
@@ -748,44 +776,59 @@ const StoryboardPreview = () => {
 
         {/* Storyboard Grid */}
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <h2 className="text-2xl font-bold flex items-center gap-2">
               <Film className="h-6 w-6 text-primary" />
               Scene Breakdown
             </h2>
-            <SceneTemplateLibrary onInsertTemplate={handleInsertTemplate} />
+            <div className="flex items-center gap-3">
+              <SceneSearch
+                onSearch={setSearchQuery}
+                resultCount={filteredScenes.length}
+                totalCount={script.scenes.length}
+              />
+              <SceneTemplateLibrary onInsertTemplate={handleInsertTemplate} />
+            </div>
           </div>
           
           <div className="grid gap-6">
-            {script.scenes.map((scene, index) => (
-              <div
-                key={scene.scene_number}
-                ref={(el) => (sceneRefs.current[scene.scene_number] = el)}
-              >
-              <SceneEditor
-                  scene={scene}
-                  onSave={handleSceneUpdate}
-                  onDelete={
-                    script.scenes.length > 1
-                      ? () => handleSceneDelete(scene.scene_number)
-                      : undefined
-                  }
-                  onDuplicate={() => handleSceneDuplicate(scene.scene_number)}
-                  onMoveUp={
-                    index > 0
-                      ? () => handleSceneReorder(scene.scene_number, "up")
-                      : undefined
-                  }
-                  onMoveDown={
-                    index < script.scenes.length - 1
-                      ? () => handleSceneReorder(scene.scene_number, "down")
-                      : undefined
-                  }
-                  isFirst={index === 0}
-                  isLast={index === script.scenes.length - 1}
-                />
+            {filteredScenes.map((scene) => {
+              const index = script.scenes.findIndex(s => s.scene_number === scene.scene_number);
+              return (
+                <div
+                  key={scene.scene_number}
+                  ref={(el) => (sceneRefs.current[scene.scene_number] = el)}
+                >
+                  <SceneEditor
+                    scene={scene}
+                    onSave={handleSceneUpdate}
+                    onDelete={
+                      script.scenes.length > 1
+                        ? () => handleSceneDelete(scene.scene_number)
+                        : undefined
+                    }
+                    onDuplicate={() => handleSceneDuplicate(scene.scene_number)}
+                    onMoveUp={
+                      index > 0
+                        ? () => handleSceneReorder(scene.scene_number, "up")
+                        : undefined
+                    }
+                    onMoveDown={
+                      index < script.scenes.length - 1
+                        ? () => handleSceneReorder(scene.scene_number, "down")
+                        : undefined
+                    }
+                    isFirst={index === 0}
+                    isLast={index === script.scenes.length - 1}
+                  />
+                </div>
+              );
+            })}
+            {filteredScenes.length === 0 && searchQuery && (
+              <div className="text-center py-12 text-muted-foreground">
+                No scenes match your search for "{searchQuery}"
               </div>
-            ))}
+            )}
           </div>
         </div>
 
