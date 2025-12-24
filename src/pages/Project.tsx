@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { ArrowLeft, Sparkles, Users, Film, Clock } from "lucide-react";
+import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 
 interface Character {
   name: string;
@@ -47,6 +48,9 @@ interface Project {
   script: any; // Using any to handle Json type from Supabase
   created_at: string;
   photos: string[] | null;
+  video_url: string | null;
+  video_status: string | null;
+  video_progress: number | null;
 }
 
 const Project = () => {
@@ -374,6 +378,55 @@ const Project = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Generated Video */}
+            {project.video_url && project.video_status === 'completed' && (
+              <Card className="shadow-[var(--shadow-medium)] border-2 border-primary/20">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Video className="w-6 h-6 text-primary" />
+                    Your Generated Animation
+                  </CardTitle>
+                  <CardDescription>Your animated movie is ready to view and download</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <video 
+                    controls 
+                    className="w-full rounded-lg border border-border"
+                    poster="/placeholder.svg"
+                  >
+                    <source src={project.video_url} type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                  <div className="flex justify-center">
+                    <Button asChild size="lg">
+                      <a href={project.video_url} download>
+                        <Download className="w-5 h-5 mr-2" />
+                        Download MP4
+                      </a>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Video Generation In Progress */}
+            {project.video_status === 'generating' && (
+              <Card className="shadow-[var(--shadow-medium)]">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Video className="w-6 h-6 text-primary animate-pulse" />
+                    Generating Your Animation...
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Progress value={project.video_progress || 0} className="h-3" />
+                  <p className="text-center text-muted-foreground">
+                    {project.video_progress || 0}% complete
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Action Buttons */}
             <div className="flex justify-center gap-4">
