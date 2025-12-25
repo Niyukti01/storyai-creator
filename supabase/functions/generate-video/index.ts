@@ -63,6 +63,10 @@ serve(async (req) => {
     const sceneImages: string[] = []
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
 
+    if (!LOVABLE_API_KEY) {
+      throw new Error('LOVABLE_API_KEY is not configured')
+    }
+
     const totalScenes = scenes.length
     for (let i = 0; i < totalScenes; i++) {
       // Check if generation was cancelled
@@ -91,41 +95,52 @@ serve(async (req) => {
       const scene = scenes[i]
       console.log(`Generating image for scene ${scene.scene_number} (${i + 1}/${totalScenes})...`)
 
-      // Update progress
-      const progress = Math.floor(((i + 1) / totalScenes) * 100)
+      // Update progress (image generation is 70% of the work)
+      const progress = Math.floor(((i + 1) / totalScenes) * 70)
       await supabase
         .from('projects')
         .update({ video_progress: progress })
         .eq('id', projectId)
 
       // Create prompt for scene illustration
-      const imagePrompt = `Create a ${project.genre} style illustration for: ${scene.description}. Setting: ${scene.setting}. ${scene.action}. High quality, cinematic, detailed.`
+      const imagePrompt = `Create a ${project.genre} style illustration for: ${scene.description}. Setting: ${scene.setting}. ${scene.action}. High quality, cinematic, detailed, 16:9 aspect ratio.`
 
       try {
         // Use Lovable AI to generate scene image
-        const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/images/generations', {
+        const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${LOVABLE_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'google/gemini-2.5-flash-image',
-            prompt: imagePrompt,
-            n: 1,
-            size: '1920x1080',
+            model: 'google/gemini-2.5-flash-image-preview',
+            messages: [
+              {
+                role: 'user',
+                content: imagePrompt
+              }
+            ],
+            modalities: ['image', 'text']
           }),
         })
 
         if (!imageResponse.ok) {
-          console.error(`Failed to generate image for scene ${i + 1}`)
+          const errorText = await imageResponse.text()
+          console.error(`Failed to generate image for scene ${i + 1}:`, errorText)
           continue
         }
 
         const imageData = await imageResponse.json()
-        if (imageData.data && imageData.data[0] && imageData.data[0].url) {
-          sceneImages.push(imageData.data[0].url)
+        console.log(`Image response for scene ${i + 1}:`, JSON.stringify(imageData).substring(0, 200))
+        
+        // Extract image from the response
+        const imageUrl = imageData.choices?.[0]?.message?.images?.[0]?.image_url?.url
+        if (imageUrl) {
+          sceneImages.push(imageUrl)
           console.log(`Image generated for scene ${i + 1}`)
+        } else {
+          console.error(`No image URL in response for scene ${i + 1}`)
         }
       } catch (error) {
         console.error(`Error generating image for scene ${i + 1}:`, error)
@@ -134,59 +149,135 @@ serve(async (req) => {
 
     console.log(`Generated ${sceneImages.length} scene images`)
 
-    // Generate audio narration for dialogue
-    // This would use text-to-speech API (OpenAI, ElevenLabs, etc.)
-    // For now, we'll prepare the data structure
+    // Update progress - starting video generation
+    await supabase
+      .from('projects')
+      .update({ video_progress: 75 })
+      .eq('id', projectId)
 
-    const audioSegments = []
-    for (const scene of scenes) {
-      if (scene.dialogue && scene.dialogue.length > 0) {
-        for (const line of scene.dialogue) {
-          audioSegments.push({
-            character: line.character,
-            text: line.line,
-            emotion: line.emotion,
-          })
+    // Now generate a video from the first scene image using Lovable AI
+    let videoUrl = null
+    
+    if (sceneImages.length > 0) {
+      console.log('Generating video from scene images...')
+      
+      // Use the first scene image to generate an animated video
+      const firstSceneImage = sceneImages[0]
+      const videoPrompt = `Animate this scene with gentle movement, cinematic panning, subtle character animations. ${scenes[0]?.action || 'Smooth camera movement.'}`
+      
+      try {
+        const videoResponse = await fetch('https://ai.gateway.lovable.dev/v1/videos/generations', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'veo-2.0-generate-001',
+            prompt: videoPrompt,
+            starting_frame: firstSceneImage,
+            duration: 5,
+            resolution: '720p'
+          }),
+        })
+
+        if (videoResponse.ok) {
+          const videoData = await videoResponse.json()
+          console.log('Video generation response:', JSON.stringify(videoData).substring(0, 500))
+          
+          if (videoData.data?.[0]?.url) {
+            const generatedVideoUrl = videoData.data[0].url
+            
+            // Download the video and upload to Supabase storage
+            const videoFetchResponse = await fetch(generatedVideoUrl)
+            if (videoFetchResponse.ok) {
+              const videoBlob = await videoFetchResponse.blob()
+              const videoFileName = `${projectId}/${Date.now()}.mp4`
+              
+              const { data: uploadData, error: uploadError } = await supabase.storage
+                .from('generated-videos')
+                .upload(videoFileName, videoBlob, {
+                  contentType: 'video/mp4',
+                  upsert: true
+                })
+
+              if (uploadError) {
+                console.error('Error uploading video:', uploadError)
+              } else {
+                // Get public URL
+                const { data: publicUrlData } = supabase.storage
+                  .from('generated-videos')
+                  .getPublicUrl(videoFileName)
+                
+                videoUrl = publicUrlData.publicUrl
+                console.log('Video uploaded successfully:', videoUrl)
+              }
+            }
+          }
+        } else {
+          const errorText = await videoResponse.text()
+          console.error('Video generation failed:', errorText)
+        }
+      } catch (error) {
+        console.error('Error generating video:', error)
+      }
+    }
+
+    // Update progress
+    await supabase
+      .from('projects')
+      .update({ video_progress: 95 })
+      .eq('id', projectId)
+
+    // If video generation failed, create a slideshow from images
+    if (!videoUrl && sceneImages.length > 0) {
+      console.log('Video generation unavailable, using first scene image as preview')
+      
+      // Upload first image as a fallback preview
+      const firstImage = sceneImages[0]
+      if (firstImage.startsWith('data:image')) {
+        try {
+          const base64Data = firstImage.split(',')[1]
+          const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
+          const imageFileName = `${projectId}/preview-${Date.now()}.png`
+          
+          const { error: uploadError } = await supabase.storage
+            .from('generated-videos')
+            .upload(imageFileName, imageBytes, {
+              contentType: 'image/png',
+              upsert: true
+            })
+
+          if (!uploadError) {
+            const { data: publicUrlData } = supabase.storage
+              .from('generated-videos')
+              .getPublicUrl(imageFileName)
+            
+            // Store images in project avatar for slideshow
+            await supabase
+              .from('projects')
+              .update({
+                avatar: {
+                  ...project.avatar,
+                  sceneImages: sceneImages.slice(0, 5) // Store first 5 scene images
+                }
+              })
+              .eq('id', projectId)
+            
+            console.log('Preview image uploaded:', publicUrlData.publicUrl)
+          }
+        } catch (error) {
+          console.error('Error uploading preview image:', error)
         }
       }
     }
 
-    console.log(`Prepared ${audioSegments.length} audio segments`)
-
-    // Create video composition data
-    const videoComposition = {
-      title: project.title,
-      genre: project.genre,
-      duration: script.estimated_duration,
-      scenes: scenes.map((scene: any, index: number) => ({
-        sceneNumber: scene.scene_number,
-        imageUrl: sceneImages[index] || null,
-        description: scene.description,
-        setting: scene.setting,
-        action: scene.action,
-        dialogue: scene.dialogue,
-        duration: 5, // seconds per scene
-      })),
-      avatar: project.avatar,
-      voiceSample: project.voice_sample_url,
-      audioSegments,
-      musicTrack: project.music_track || null,
-    }
-
-    console.log('Video composition prepared')
-    if (project.music_track) {
-      console.log('Music track included in composition:', project.music_track)
-    }
-    const mockVideoUrl = `https://placeholder-video.com/${projectId}-${Date.now()}.mp4`
-
-    console.log('Video generation simulated, storing result...')
-
-    // Update project with video URL
+    // Final update
     const { error: updateError } = await supabase
       .from('projects')
       .update({
-        video_url: mockVideoUrl,
-        video_status: 'completed',
+        video_url: videoUrl,
+        video_status: videoUrl ? 'completed' : 'images_only',
         video_progress: 100,
         video_generated_at: new Date().toISOString(),
       })
@@ -196,13 +287,14 @@ serve(async (req) => {
       throw updateError
     }
 
-    console.log('Video generation completed successfully')
+    console.log('Video generation completed:', videoUrl ? 'with video' : 'images only')
 
     return new Response(
       JSON.stringify({
         success: true,
-        videoUrl: mockVideoUrl,
-        composition: videoComposition,
+        videoUrl: videoUrl,
+        sceneImages: sceneImages.length,
+        status: videoUrl ? 'completed' : 'images_only'
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -211,9 +303,10 @@ serve(async (req) => {
   } catch (error: any) {
     console.error('Error in generate-video function:', error)
     
-    // Try to update status to failed if we have projectId
+    // Try to update status to failed
     try {
-      const { projectId } = await req.json()
+      const body = await req.clone().json()
+      const projectId = body.projectId
       if (projectId) {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
