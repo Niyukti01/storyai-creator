@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { VideoThumbnail } from "@/components/VideoThumbnail";
+import { SocialShare } from "@/components/SocialShare";
 
 interface Character {
   name: string;
@@ -395,13 +396,18 @@ const Project = () => {
                     src={project.video_url} 
                     className="w-full rounded-lg border border-border"
                   />
-                  <div className="flex justify-center">
+                  <div className="flex justify-center gap-3">
                     <Button asChild size="lg">
                       <a href={project.video_url} download>
                         <Download className="w-5 h-5 mr-2" />
                         Download MP4
                       </a>
                     </Button>
+                    <SocialShare 
+                      videoUrl={project.video_url} 
+                      title={project.title}
+                      description={project.description || undefined}
+                    />
                   </div>
                 </CardContent>
               </Card>
