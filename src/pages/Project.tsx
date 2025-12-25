@@ -10,6 +10,7 @@ import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video } from "lucide
 import { Progress } from "@/components/ui/progress";
 import { VideoThumbnail } from "@/components/VideoThumbnail";
 import { SocialShare } from "@/components/SocialShare";
+import { VideoGallery } from "@/components/VideoGallery";
 
 interface Character {
   name: string;
@@ -385,10 +386,17 @@ const Project = () => {
             {project.video_url && project.video_status === 'completed' && (
               <Card className="shadow-[var(--shadow-medium)] border-2 border-primary/20">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Video className="w-6 h-6 text-primary" />
-                    Your Generated Animation
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <Video className="w-6 h-6 text-primary" />
+                      Your Generated Animation
+                    </CardTitle>
+                    <VideoGallery 
+                      projectId={project.id} 
+                      currentVideoUrl={project.video_url}
+                      onSelectVersion={(url) => setProject(prev => prev ? { ...prev, video_url: url } : null)}
+                    />
+                  </div>
                   <CardDescription>Your animated movie is ready to view and download</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
