@@ -272,6 +272,41 @@ serve(async (req) => {
       }
     }
 
+    // Get current version count
+    const { data: existingVersions } = await supabase
+      .from('video_versions')
+      .select('version_number')
+      .eq('project_id', projectId)
+      .order('version_number', { ascending: false })
+      .limit(1)
+
+    const nextVersionNumber = (existingVersions && existingVersions.length > 0) 
+      ? existingVersions[0].version_number + 1 
+      : 1
+
+    // Save video version to history if we have a video URL
+    if (videoUrl) {
+      const { error: versionError } = await supabase
+        .from('video_versions')
+        .insert({
+          project_id: projectId,
+          video_url: videoUrl,
+          version_number: nextVersionNumber,
+          status: 'completed',
+          metadata: {
+            scenes_count: scenes.length,
+            images_generated: sceneImages.length,
+            music_track: project.music_track?.id || null
+          }
+        })
+
+      if (versionError) {
+        console.error('Error saving video version:', versionError)
+      } else {
+        console.log(`Saved video as version ${nextVersionNumber}`)
+      }
+    }
+
     // Final update
     const { error: updateError } = await supabase
       .from('projects')

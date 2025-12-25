@@ -107,6 +107,53 @@ export type Database = {
         }
         Relationships: []
       }
+      video_versions: {
+        Row: {
+          created_at: string
+          duration_seconds: number | null
+          file_size_bytes: number | null
+          id: string
+          metadata: Json | null
+          project_id: string
+          status: string
+          thumbnail_url: string | null
+          version_number: number
+          video_url: string
+        }
+        Insert: {
+          created_at?: string
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          id?: string
+          metadata?: Json | null
+          project_id: string
+          status?: string
+          thumbnail_url?: string | null
+          version_number?: number
+          video_url: string
+        }
+        Update: {
+          created_at?: string
+          duration_seconds?: number | null
+          file_size_bytes?: number | null
+          id?: string
+          metadata?: Json | null
+          project_id?: string
+          status?: string
+          thumbnail_url?: string | null
+          version_number?: number
+          video_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
