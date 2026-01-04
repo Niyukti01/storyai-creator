@@ -13,6 +13,7 @@ import { SocialShare } from "@/components/SocialShare";
 import { VideoGallery } from "@/components/VideoGallery";
 import { VideoAnnotations } from "@/components/VideoAnnotations";
 import { VideoChapters } from "@/components/VideoChapters";
+import { BatchExport } from "@/components/BatchExport";
 
 interface Character {
   name: string;
@@ -406,7 +407,7 @@ const Project = () => {
                     src={project.video_url} 
                     className="w-full rounded-lg border border-border"
                   />
-                  <div className="flex justify-center gap-3">
+                  <div className="flex justify-center gap-3 flex-wrap">
                     <Button asChild size="lg">
                       <a href={project.video_url} download>
                         <Download className="w-5 h-5 mr-2" />
@@ -417,6 +418,11 @@ const Project = () => {
                       videoUrl={project.video_url} 
                       title={project.title}
                       description={project.description || undefined}
+                    />
+                    <BatchExport 
+                      projectId={project.id}
+                      projectTitle={project.title}
+                      currentVideoUrl={project.video_url}
                     />
                   </div>
                   <div className="grid md:grid-cols-2 gap-4">
