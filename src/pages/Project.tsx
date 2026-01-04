@@ -12,6 +12,7 @@ import { VideoThumbnail } from "@/components/VideoThumbnail";
 import { SocialShare } from "@/components/SocialShare";
 import { VideoGallery } from "@/components/VideoGallery";
 import { VideoAnnotations } from "@/components/VideoAnnotations";
+import { VideoChapters } from "@/components/VideoChapters";
 
 interface Character {
   name: string;
@@ -418,10 +419,17 @@ const Project = () => {
                       description={project.description || undefined}
                     />
                   </div>
-                  <VideoAnnotations 
-                    projectId={project.id} 
-                    videoUrl={project.video_url}
-                  />
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <VideoChapters 
+                      projectId={project.id} 
+                      videoUrl={project.video_url}
+                      scenes={project.script?.scenes || []}
+                    />
+                    <VideoAnnotations 
+                      projectId={project.id} 
+                      videoUrl={project.video_url}
+                    />
+                  </div>
                 </CardContent>
               </Card>
             )}
