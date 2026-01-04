@@ -155,6 +155,57 @@ export type Database = {
           },
         ]
       }
+      video_chapters: {
+        Row: {
+          created_at: string
+          end_seconds: number | null
+          id: string
+          project_id: string
+          scene_number: number
+          start_seconds: number
+          thumbnail_url: string | null
+          title: string
+          video_version_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          end_seconds?: number | null
+          id?: string
+          project_id: string
+          scene_number: number
+          start_seconds?: number
+          thumbnail_url?: string | null
+          title: string
+          video_version_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          end_seconds?: number | null
+          id?: string
+          project_id?: string
+          scene_number?: number
+          start_seconds?: number
+          thumbnail_url?: string | null
+          title?: string
+          video_version_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_chapters_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_chapters_video_version_id_fkey"
+            columns: ["video_version_id"]
+            isOneToOne: false
+            referencedRelation: "video_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       video_versions: {
         Row: {
           created_at: string
