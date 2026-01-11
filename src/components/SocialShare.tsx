@@ -3,11 +3,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Share2, Twitter, Facebook, MessageCircle, Link, Check } from "lucide-react";
+import { Share2, Twitter, Facebook, MessageCircle, Link, Check, Mail } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { EmailShareDialog } from "./EmailShareDialog";
 
 interface SocialShareProps {
   videoUrl: string;
@@ -17,6 +19,7 @@ interface SocialShareProps {
 
 export const SocialShare = ({ videoUrl, title, description }: SocialShareProps) => {
   const [copied, setCopied] = useState(false);
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
 
   const shareText = `Check out "${title}" - created with MyStoryAI! ${description || ""}`.trim();
   const encodedText = encodeURIComponent(shareText);
@@ -44,35 +47,49 @@ export const SocialShare = ({ videoUrl, title, description }: SocialShareProps) 
   };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Share2 className="h-4 w-4" />
-          Share
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuItem onClick={() => handleShare("twitter")} className="gap-2 cursor-pointer">
-          <Twitter className="h-4 w-4 text-[#1DA1F2]" />
-          Share on Twitter
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleShare("facebook")} className="gap-2 cursor-pointer">
-          <Facebook className="h-4 w-4 text-[#4267B2]" />
-          Share on Facebook
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleShare("whatsapp")} className="gap-2 cursor-pointer">
-          <MessageCircle className="h-4 w-4 text-[#25D366]" />
-          Share on WhatsApp
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleCopyLink} className="gap-2 cursor-pointer">
-          {copied ? (
-            <Check className="h-4 w-4 text-green-500" />
-          ) : (
-            <Link className="h-4 w-4" />
-          )}
-          Copy Link
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-2">
+            <Share2 className="h-4 w-4" />
+            Share
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onClick={() => handleShare("twitter")} className="gap-2 cursor-pointer">
+            <Twitter className="h-4 w-4 text-[#1DA1F2]" />
+            Share on Twitter
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleShare("facebook")} className="gap-2 cursor-pointer">
+            <Facebook className="h-4 w-4 text-[#4267B2]" />
+            Share on Facebook
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => handleShare("whatsapp")} className="gap-2 cursor-pointer">
+            <MessageCircle className="h-4 w-4 text-[#25D366]" />
+            Share on WhatsApp
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleCopyLink} className="gap-2 cursor-pointer">
+            {copied ? (
+              <Check className="h-4 w-4 text-green-500" />
+            ) : (
+              <Link className="h-4 w-4" />
+            )}
+            Copy Link
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setEmailDialogOpen(true)} className="gap-2 cursor-pointer">
+            <Mail className="h-4 w-4 text-primary" />
+            Share via Email
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <EmailShareDialog
+        open={emailDialogOpen}
+        onOpenChange={setEmailDialogOpen}
+        videoUrl={videoUrl}
+        videoTitle={title}
+      />
+    </>
   );
 };
