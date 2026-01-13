@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video } from "lucide-react";
+import { ArrowLeft, Sparkles, Users, Film, Clock, Download, Video, Heart } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { VideoThumbnail } from "@/components/VideoThumbnail";
 import { SocialShare } from "@/components/SocialShare";
@@ -14,6 +14,7 @@ import { VideoGallery } from "@/components/VideoGallery";
 import { VideoAnnotations } from "@/components/VideoAnnotations";
 import { VideoChapters } from "@/components/VideoChapters";
 import { BatchExport } from "@/components/BatchExport";
+import { LovableAnimationGenerator } from "@/components/LovableAnimationGenerator";
 
 interface Character {
   name: string;
@@ -52,6 +53,7 @@ interface Project {
   genre: string;
   status: string;
   script: any; // Using any to handle Json type from Supabase
+  avatar: any; // JSON field for avatar and lovable animation data
   created_at: string;
   photos: string[] | null;
   video_url: string | null;
@@ -384,6 +386,16 @@ const Project = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Lovable Animated Story Video Generator */}
+            <LovableAnimationGenerator
+              projectId={project.id}
+              hasScript={!!project.script}
+              videoStatus={project.video_status}
+              videoProgress={project.video_progress}
+              onVideoGenerated={loadProject}
+              existingAnimation={project.avatar?.lovableAnimation}
+            />
 
             {/* Generated Video */}
             {project.video_url && project.video_status === 'completed' && (
