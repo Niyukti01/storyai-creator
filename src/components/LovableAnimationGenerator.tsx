@@ -245,11 +245,11 @@ export const LovableAnimationGenerator = ({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div className="flex items-center gap-2 text-muted-foreground">
               <CheckCircle2 className="w-4 h-4 text-green-500" />
-              <span>Real MP4 videos</span>
+              <span>Real animated scenes</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <CheckCircle2 className="w-4 h-4 text-green-500" />
-              <span>Scene-by-scene animation</span>
+              <span>Scene-by-scene visuals</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <CheckCircle2 className="w-4 h-4 text-green-500" />
@@ -257,18 +257,23 @@ export const LovableAnimationGenerator = ({
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <CheckCircle2 className="w-4 h-4 text-green-500" />
-              <span>Downloadable output</span>
+              <span>Under 5 min generation</span>
             </div>
           </div>
 
           <div className="bg-pink-100/50 dark:bg-pink-950/30 rounded-lg p-4 space-y-2">
             <p className="text-sm font-medium text-pink-700 dark:text-pink-300">Animation Style:</p>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>• Soft 2D animation with Pixar-like warmth</li>
+              <li>• Soft 2D storybook illustrations with Pixar-like warmth</li>
               <li>• Pastel colors, rounded characters, expressive eyes</li>
-              <li>• Gentle movements, magical sparkles, smooth transitions</li>
-              <li>• Child-friendly, emotionally comforting atmosphere</li>
+              <li>• Magical atmosphere, smooth scene transitions</li>
+              <li>• Child-friendly, emotionally comforting</li>
             </ul>
+          </div>
+
+          <div className="bg-blue-50/50 dark:bg-blue-950/30 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
+            <p className="font-medium">⚡ Fast Generation</p>
+            <p className="text-muted-foreground text-xs mt-1">Optimized for 5-minute max generation time with parallel processing</p>
           </div>
           
           <Button
@@ -311,8 +316,9 @@ export const LovableAnimationGenerator = ({
             <Loader2 className="w-6 h-6 text-pink-500 animate-spin" />
             Creating Your Animated Video...
           </CardTitle>
-          <CardDescription>
-            Generating real animated MP4 video with scenes, movements, and narration
+          <CardDescription className="flex items-center gap-2">
+            <span>Generating animated video with scenes and narration</span>
+            <Badge variant="secondary" className="bg-blue-100 text-blue-700">⚡ Optimized</Badge>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
