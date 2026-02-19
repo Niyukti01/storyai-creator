@@ -1,5 +1,8 @@
 project_id = "jehgwsthqsltndybqoce"
 
+[functions.generate-lovable-animation]
+verify_jwt = true
+
 [functions.generate-story-script]
 verify_jwt = true
 
