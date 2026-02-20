@@ -67,8 +67,9 @@ async function buildMp4FromScenes(
   const W = 1280;
   const H = 720;
   const FPS = 24;
-  const SCENE_DURATION_SEC = 8; // seconds per scene
-  const FADE_FRAMES = FPS; // 1 second fade
+  const SCENE_DURATION_SEC = 8;
+  const FADE_FRAMES = FPS;          // 1s fade in/out
+  const CROSSFADE_FRAMES = FPS * 1; // 1s cross-dissolve overlap between scenes
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -127,6 +128,11 @@ async function buildMp4FromScenes(
     'trackIn',     // tracking close-up
   ];
 
+  // Easing for smooth camera
+  function easeInOutCubic(x: number): number {
+    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  }
+
   // Pre-create vignette overlay
   const vignetteCanvas = document.createElement("canvas");
   vignetteCanvas.width = W;
@@ -139,10 +145,125 @@ async function buildMp4FromScenes(
   vctx.fillStyle = vigGrad;
   vctx.fillRect(0, 0, W, H);
 
-  // Easing for smooth camera
-  function easeInOutCubic(x: number): number {
-    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  // Transition types between scenes
+  const transitionTypes = ['crossDissolve', 'dip', 'wipeLeft', 'crossDissolve', 'dip', 'wipeRight'];
+
+  // Helper: draw scene-to-scene transition frame
+  function drawTransitionFrame(
+    prevImg: HTMLImageElement,
+    nextImg: HTMLImageElement,
+    prevScene: LovableScene,
+    nextScene: LovableScene,
+    prevIdx: number,
+    nextIdx: number,
+    transProgress: number, // 0→1 within transition
+    totalFramesInScene: number
+  ) {
+    const transition = transitionTypes[prevIdx % transitionTypes.length];
+    const et = easeInOutCubic(transProgress);
+
+    switch (transition) {
+      case 'wipeLeft': {
+        // Draw next scene full, then prev scene clipped from right
+        drawSceneLayer(nextImg, nextScene, nextIdx, totalFramesInScene - 1, totalFramesInScene, 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, W * (1 - et), H);
+        ctx.clip();
+        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
+        ctx.restore();
+        break;
+      }
+      case 'wipeRight': {
+        drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(W * et, 0, W, H);
+        ctx.clip();
+        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
+        ctx.restore();
+        break;
+      }
+      case 'dip': {
+        // Dip to black then reveal
+        if (et < 0.5) {
+          const blackAlpha = et * 2;
+          drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
+          ctx.fillStyle = `rgba(0,0,0,${blackAlpha})`;
+          ctx.fillRect(0, 0, W, H);
+        } else {
+          const revealAlpha = (et - 0.5) * 2;
+          drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, 1);
+          ctx.fillStyle = `rgba(0,0,0,${1 - revealAlpha})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+        break;
+      }
+      default: {
+        // Cross-dissolve
+        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1 - et);
+        ctx.globalAlpha = et;
+        drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, et);
+        ctx.globalAlpha = 1;
+        break;
+      }
+    }
+
+    // Letterbox always on top during transitions
+    drawLetterbox(1);
   }
+
+  // Draw just the scene image layer (without captions/UI) for compositing
+  function drawSceneLayer(
+    img: HTMLImageElement,
+    scene: LovableScene,
+    sceneIdx: number,
+    frameInScene: number,
+    totalFramesInScene: number,
+    alpha: number
+  ) {
+    const t = frameInScene / totalFramesInScene;
+    const et2 = easeInOutCubic(t);
+    const pattern = cameraPatterns[sceneIdx % cameraPatterns.length];
+
+    const scaleX = W / img.naturalWidth;
+    const scaleY = H / img.naturalHeight;
+    const baseScale = Math.max(scaleX, scaleY) * 1.2;
+
+    let camX = 0, camY = 0, camZoom = 1;
+    switch (pattern) {
+      case 'zoomIn': camZoom = 1 + et2 * 0.1; camX = et2 * 25; camY = -et2 * 8; break;
+      case 'panRight': camX = et2 * 80 - 40; camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02; break;
+      case 'zoomOut': camZoom = 1.1 - et2 * 0.1; camY = -et2 * 15; camX = Math.sin(t * Math.PI * 2) * 8; break;
+      case 'panLeft': camX = -et2 * 80 + 40; camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02; break;
+      case 'tiltUp': camY = -et2 * 50 + 25; camZoom = 1 + et2 * 0.06; camX = Math.sin(t * Math.PI) * 10; break;
+      case 'trackIn': camZoom = 1 + et2 * 0.15; camX = Math.sin(t * Math.PI * 0.5) * 20; camY = -et2 * 15; break;
+    }
+
+    const fgZoom = baseScale * camZoom;
+    const fgDw = img.naturalWidth * fgZoom;
+    const fgDh = img.naturalHeight * fgZoom;
+    const fgDx = (W - fgDw) / 2 + camX;
+    const fgDy = (H - fgDh) / 2 + camY;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(img, fgDx, fgDy, fgDw, fgDh);
+    ctx.restore();
+  }
+
+  // Draw letterbox with optional reveal animation
+  function drawLetterbox(reveal: number) {
+    const barH = 36 * Math.min(1, reveal);
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(0, 0, W, barH);
+    ctx.fillRect(0, H - barH, W, barH);
+    // Subtle edge highlight
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    ctx.fillRect(0, barH - 1, W, 1);
+    ctx.fillRect(0, H - barH, W, 1);
+  }
+
 
   // Helper: draw one frame with cinematic 3D depth camera
   function drawFrame(
@@ -344,21 +465,43 @@ async function buildMp4FromScenes(
 
   recorder.start(100);
 
-  const totalFrames = scenes.length * SCENE_DURATION_SEC * FPS;
+  const framesPerScene = SCENE_DURATION_SEC * FPS;
+  // Total frames = scenes * framesPerScene + transitions * crossfade frames
+  const transitionCount = Math.max(0, scenes.length - 1);
+  const totalFrames = scenes.length * framesPerScene + transitionCount * CROSSFADE_FRAMES;
   let framesDone = 0;
 
   for (let si = 0; si < scenes.length; si++) {
     const scene = scenes[si];
     const img = images[si];
-    const framesInScene = SCENE_DURATION_SEC * FPS;
 
-    for (let f = 0; f < framesInScene; f++) {
-      drawFrame(img, scene, si, f, framesInScene);
+    // Draw main scene frames (minus crossfade at end if not last scene)
+    const mainFrames = si < scenes.length - 1
+      ? framesPerScene - CROSSFADE_FRAMES
+      : framesPerScene;
+
+    for (let f = 0; f < mainFrames; f++) {
+      drawFrame(img, scene, si, f, framesPerScene);
       framesDone++;
       if (framesDone % (FPS * 4) === 0) {
         onProgress?.(Math.round((framesDone / totalFrames) * 100));
-        // Yield to browser periodically (not every frame — much faster)
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    // Cross-dissolve transition to next scene
+    if (si < scenes.length - 1) {
+      const nextImg = images[si + 1];
+      const nextScene = scenes[si + 1];
+      for (let tf = 0; tf < CROSSFADE_FRAMES; tf++) {
+        const transProgress = tf / CROSSFADE_FRAMES;
+        ctx.clearRect(0, 0, W, H);
+        drawTransitionFrame(img, nextImg, scene, nextScene, si, si + 1, transProgress, framesPerScene);
+        framesDone++;
+        if (framesDone % (FPS * 4) === 0) {
+          onProgress?.(Math.round((framesDone / totalFrames) * 100));
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
       }
     }
   }
