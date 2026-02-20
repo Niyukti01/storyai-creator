@@ -120,14 +120,31 @@ async function buildMp4FromScenes(
   // Cinematic camera patterns per scene (cycle through)
   const cameraPatterns = [
     'zoomIn',      // slow zoom in
-    'panRight',    // gentle pan right
+    'panRight',    // gentle pan right  
     'zoomOut',     // pull back
     'panLeft',     // gentle pan left
     'tiltUp',      // slight upward tilt
     'trackIn',     // tracking close-up
   ];
 
-  // Helper: draw one frame with cinematic camera
+  // Pre-create vignette overlay
+  const vignetteCanvas = document.createElement("canvas");
+  vignetteCanvas.width = W;
+  vignetteCanvas.height = H;
+  const vctx = vignetteCanvas.getContext("2d")!;
+  const vigGrad = vctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.75);
+  vigGrad.addColorStop(0, "rgba(0,0,0,0)");
+  vigGrad.addColorStop(0.7, "rgba(0,0,0,0.05)");
+  vigGrad.addColorStop(1, "rgba(0,0,0,0.45)");
+  vctx.fillStyle = vigGrad;
+  vctx.fillRect(0, 0, W, H);
+
+  // Easing for smooth camera
+  function easeInOutCubic(x: number): number {
+    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  }
+
+  // Helper: draw one frame with cinematic 3D depth camera
   function drawFrame(
     img: HTMLImageElement,
     scene: LovableScene,
@@ -135,116 +152,194 @@ async function buildMp4FromScenes(
     frameInScene: number,
     totalFramesInScene: number
   ) {
-    const t = frameInScene / totalFramesInScene; // 0→1 progress
+    const t = frameInScene / totalFramesInScene; // 0→1
+    const et = easeInOutCubic(t); // eased for smooth motion
     const pattern = cameraPatterns[sceneIdx % cameraPatterns.length];
 
-    // Base cover dimensions
+    // Base cover dimensions (extra 20% for parallax room)
     const scaleX = W / img.naturalWidth;
     const scaleY = H / img.naturalHeight;
-    const baseScale = Math.max(scaleX, scaleY) * 1.15; // extra room for camera moves
+    const baseScale = Math.max(scaleX, scaleY) * 1.2;
 
     let camX = 0, camY = 0, camZoom = 1;
 
     switch (pattern) {
       case 'zoomIn':
-        camZoom = 1 + t * 0.08;
-        camX = t * 20;
+        camZoom = 1 + et * 0.1;
+        camX = et * 25;
+        camY = -et * 8;
         break;
       case 'panRight':
-        camX = t * 60 - 30;
-        camZoom = 1 + 0.02;
+        camX = et * 80 - 40;
+        camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02;
         break;
       case 'zoomOut':
-        camZoom = 1.08 - t * 0.08;
-        camY = -t * 10;
+        camZoom = 1.1 - et * 0.1;
+        camY = -et * 15;
+        camX = Math.sin(t * Math.PI * 2) * 8;
         break;
       case 'panLeft':
-        camX = -t * 60 + 30;
-        camZoom = 1 + 0.03;
+        camX = -et * 80 + 40;
+        camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02;
         break;
       case 'tiltUp':
-        camY = -t * 40 + 20;
-        camZoom = 1 + t * 0.04;
+        camY = -et * 50 + 25;
+        camZoom = 1 + et * 0.06;
+        camX = Math.sin(t * Math.PI) * 10;
         break;
       case 'trackIn':
-        camZoom = 1 + t * 0.12;
-        camX = t * 15;
-        camY = -t * 10;
+        camZoom = 1 + et * 0.15;
+        camX = Math.sin(t * Math.PI * 0.5) * 20;
+        camY = -et * 15;
         break;
     }
 
-    const finalScale = baseScale * camZoom;
-    const dw = img.naturalWidth * finalScale;
-    const dh = img.naturalHeight * finalScale;
-    const dx = (W - dw) / 2 + camX;
-    const dy = (H - dh) / 2 + camY;
+    // -- Background layer (moves slower = depth illusion) --
+    const bgZoom = baseScale * (camZoom * 0.92);
+    const bgDw = img.naturalWidth * bgZoom;
+    const bgDh = img.naturalHeight * bgZoom;
+    const bgDx = (W - bgDw) / 2 + camX * 0.6;
+    const bgDy = (H - bgDh) / 2 + camY * 0.6;
 
     ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(img, dx, dy, dw, dh);
+    ctx.globalAlpha = 0.4;
+    ctx.filter = "blur(3px)";
+    ctx.drawImage(img, bgDx - 10, bgDy - 10, bgDw + 20, bgDh + 20);
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
 
-    // Fade in
+    // -- Foreground layer (main, moves at full camera speed) --
+    const fgZoom = baseScale * camZoom;
+    const fgDw = img.naturalWidth * fgZoom;
+    const fgDh = img.naturalHeight * fgZoom;
+    const fgDx = (W - fgDw) / 2 + camX;
+    const fgDy = (H - fgDh) / 2 + camY;
+    ctx.drawImage(img, fgDx, fgDy, fgDw, fgDh);
+
+    // -- Cinematic color grading (warm tint) --
+    ctx.globalCompositeOperation = "overlay";
+    ctx.fillStyle = "rgba(255, 230, 200, 0.06)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = "source-over";
+
+    // -- Vignette --
+    ctx.drawImage(vignetteCanvas, 0, 0);
+
+    // -- Subtle film grain (every 3rd frame for perf) --
+    if (frameInScene % 3 === 0) {
+      const grainData = ctx.getImageData(0, 0, W, H);
+      const px = grainData.data;
+      for (let i = 0; i < px.length; i += 16) { // sample every 4th pixel
+        const noise = (Math.random() - 0.5) * 12;
+        px[i] += noise;
+        px[i + 1] += noise;
+        px[i + 2] += noise;
+      }
+      ctx.putImageData(grainData, 0, 0);
+    }
+
+    // -- Fade in (cross-fade style) --
     if (frameInScene < FADE_FRAMES) {
-      ctx.fillStyle = `rgba(0,0,0,${1 - frameInScene / FADE_FRAMES})`;
+      const fadeAlpha = 1 - frameInScene / FADE_FRAMES;
+      ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
       ctx.fillRect(0, 0, W, H);
     }
-    // Fade out
+    // -- Fade out --
     if (frameInScene > totalFramesInScene - FADE_FRAMES) {
       const prog = (frameInScene - (totalFramesInScene - FADE_FRAMES)) / FADE_FRAMES;
       ctx.fillStyle = `rgba(0,0,0,${prog})`;
       ctx.fillRect(0, 0, W, H);
     }
 
-    // Cinematic letterbox bars (subtle)
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.fillRect(0, 0, W, 30);
-    ctx.fillRect(0, H - 30, W, 30);
+    // -- Cinematic letterbox bars --
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(0, 0, W, 36);
+    ctx.fillRect(0, H - 36, W, 36);
 
-    // Bottom gradient for text
-    const grad = ctx.createLinearGradient(0, H * 0.55, 0, H);
+    // -- Bottom gradient for captions --
+    const grad = ctx.createLinearGradient(0, H * 0.5, 0, H);
     grad.addColorStop(0, "rgba(0,0,0,0)");
-    grad.addColorStop(1, "rgba(0,0,0,0.75)");
+    grad.addColorStop(0.6, "rgba(0,0,0,0.3)");
+    grad.addColorStop(1, "rgba(0,0,0,0.8)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
 
-    // Scene label top-left
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.font = "bold 22px sans-serif";
+    // -- Scene label (cinematic style) --
+    ctx.save();
+    const labelAlpha = Math.min(1, frameInScene / (FADE_FRAMES * 2));
+    ctx.globalAlpha = labelAlpha * 0.9;
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.textAlign = "left";
-    ctx.fillText(`Scene ${scene.sceneNumber}`, 28, 60);
+    // Small scene indicator with setting
+    const sceneLabel = scene.setting
+      ? `SCENE ${scene.sceneNumber}  ·  ${scene.setting.toUpperCase()}`
+      : `SCENE ${scene.sceneNumber}`;
+    ctx.fillText(sceneLabel, 32, 62);
+    // Thin underline
+    const labelW = ctx.measureText(sceneLabel).width;
+    ctx.fillStyle = "rgba(255,200,200,0.5)";
+    ctx.fillRect(32, 66, labelW, 1.5);
+    ctx.restore();
 
-    // Narration caption with fade-in animation
-    const captionAlpha = Math.min(1, frameInScene / (FADE_FRAMES * 1.5));
-    const words = scene.narration.split(" ");
-    const lines: string[] = [];
-    let line = "";
-    const maxLineW = W - 100;
-    ctx.font = "20px sans-serif";
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width > maxLineW) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = test;
+    // -- Word-by-word caption reveal synced to scene timing --
+    const captionStartT = 0.08; // captions start at 8% into scene
+    const captionEndT = 0.92;   // captions end at 92%
+    const captionT = Math.max(0, Math.min(1, (t - captionStartT) / (captionEndT - captionStartT)));
+
+    if (captionT > 0) {
+      const allWords = scene.narration.split(" ");
+      const visibleWordCount = Math.ceil(captionT * allWords.length);
+      const visibleText = allWords.slice(0, visibleWordCount).join(" ");
+
+      // Word-wrap
+      const maxLineW = W - 120;
+      ctx.font = "500 21px sans-serif";
+      const lines: string[] = [];
+      let line = "";
+      for (const word of visibleText.split(" ")) {
+        const test = line ? `${line} ${word}` : word;
+        if (ctx.measureText(test).width > maxLineW) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
       }
-    }
-    if (line) lines.push(line);
-    const lineH = 30;
-    const totalTextH = lines.length * lineH + 20;
-    const ty = H - totalTextH - 50;
+      if (line) lines.push(line);
 
-    ctx.globalAlpha = captionAlpha;
-    ctx.fillStyle = "rgba(0,0,0,0.65)";
-    ctx.beginPath();
-    ctx.roundRect(40, ty - 8, W - 80, totalTextH + 8, 14);
-    ctx.fill();
-    ctx.fillStyle = "white";
-    ctx.font = "20px sans-serif";
-    ctx.textAlign = "center";
-    lines.forEach((l, i) => {
-      ctx.fillText(l, W / 2, ty + i * lineH + 22);
-    });
-    ctx.globalAlpha = 1;
+      const lineH = 32;
+      const pad = 16;
+      const totalTextH = lines.length * lineH + pad * 2;
+      const boxY = H - totalTextH - 56;
+
+      // Frosted glass caption background
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, captionT * 4); // quick fade-in
+      ctx.fillStyle = "rgba(10,10,20,0.7)";
+      ctx.beginPath();
+      ctx.roundRect(50, boxY, W - 100, totalTextH, 16);
+      ctx.fill();
+
+      // Accent border top
+      ctx.strokeStyle = "rgba(255,180,200,0.4)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(70, boxY);
+      ctx.lineTo(W - 70, boxY);
+      ctx.stroke();
+
+      // Caption text
+      ctx.fillStyle = "white";
+      ctx.font = "500 21px sans-serif";
+      ctx.textAlign = "center";
+      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      ctx.shadowBlur = 4;
+      lines.forEach((l, i) => {
+        ctx.fillText(l, W / 2, boxY + pad + i * lineH + 22);
+      });
+      ctx.restore();
+    }
   }
 
   recorder.start(100);
