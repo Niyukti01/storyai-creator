@@ -117,7 +117,17 @@ async function buildMp4FromScenes(
     )
   );
 
-  // Helper: draw one frame
+  // Cinematic camera patterns per scene (cycle through)
+  const cameraPatterns = [
+    'zoomIn',      // slow zoom in
+    'panRight',    // gentle pan right
+    'zoomOut',     // pull back
+    'panLeft',     // gentle pan left
+    'tiltUp',      // slight upward tilt
+    'trackIn',     // tracking close-up
+  ];
+
+  // Helper: draw one frame with cinematic camera
   function drawFrame(
     img: HTMLImageElement,
     scene: LovableScene,
@@ -125,31 +135,52 @@ async function buildMp4FromScenes(
     frameInScene: number,
     totalFramesInScene: number
   ) {
-    // Draw image cover
+    const t = frameInScene / totalFramesInScene; // 0→1 progress
+    const pattern = cameraPatterns[sceneIdx % cameraPatterns.length];
+
+    // Base cover dimensions
     const scaleX = W / img.naturalWidth;
     const scaleY = H / img.naturalHeight;
-    const scale = Math.max(scaleX, scaleY);
-    const dw = img.naturalWidth * scale;
-    const dh = img.naturalHeight * scale;
-    const dx = (W - dw) / 2;
-    const dy = (H - dh) / 2;
+    const baseScale = Math.max(scaleX, scaleY) * 1.15; // extra room for camera moves
+
+    let camX = 0, camY = 0, camZoom = 1;
+
+    switch (pattern) {
+      case 'zoomIn':
+        camZoom = 1 + t * 0.08;
+        camX = t * 20;
+        break;
+      case 'panRight':
+        camX = t * 60 - 30;
+        camZoom = 1 + 0.02;
+        break;
+      case 'zoomOut':
+        camZoom = 1.08 - t * 0.08;
+        camY = -t * 10;
+        break;
+      case 'panLeft':
+        camX = -t * 60 + 30;
+        camZoom = 1 + 0.03;
+        break;
+      case 'tiltUp':
+        camY = -t * 40 + 20;
+        camZoom = 1 + t * 0.04;
+        break;
+      case 'trackIn':
+        camZoom = 1 + t * 0.12;
+        camX = t * 15;
+        camY = -t * 10;
+        break;
+    }
+
+    const finalScale = baseScale * camZoom;
+    const dw = img.naturalWidth * finalScale;
+    const dh = img.naturalHeight * finalScale;
+    const dx = (W - dw) / 2 + camX;
+    const dy = (H - dh) / 2 + camY;
+
     ctx.clearRect(0, 0, W, H);
     ctx.drawImage(img, dx, dy, dw, dh);
-
-    // Subtle Ken Burns zoom
-    const zoomProgress = frameInScene / totalFramesInScene;
-    const zoomScale = 1 + zoomProgress * 0.04;
-    if (zoomScale !== 1) {
-      const cx = W / 2, cy = H / 2;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(zoomScale, zoomScale);
-      ctx.translate(-cx, -cy);
-      ctx.drawImage(img, dx, dy, dw, dh);
-      ctx.restore();
-    } else {
-      ctx.drawImage(img, dx, dy, dw, dh);
-    }
 
     // Fade in
     if (frameInScene < FADE_FRAMES) {
@@ -163,28 +194,34 @@ async function buildMp4FromScenes(
       ctx.fillRect(0, 0, W, H);
     }
 
-    // Bottom gradient
-    const grad = ctx.createLinearGradient(0, H * 0.6, 0, H);
+    // Cinematic letterbox bars (subtle)
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.fillRect(0, 0, W, 30);
+    ctx.fillRect(0, H - 30, W, 30);
+
+    // Bottom gradient for text
+    const grad = ctx.createLinearGradient(0, H * 0.55, 0, H);
     grad.addColorStop(0, "rgba(0,0,0,0)");
-    grad.addColorStop(1, "rgba(0,0,0,0.7)");
+    grad.addColorStop(1, "rgba(0,0,0,0.75)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
 
     // Scene label top-left
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.font = "bold 22px sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(`✨ Scene ${scene.sceneNumber}`, 28, 44);
+    ctx.fillText(`Scene ${scene.sceneNumber}`, 28, 60);
 
-    // Narration caption
+    // Narration caption with fade-in animation
+    const captionAlpha = Math.min(1, frameInScene / (FADE_FRAMES * 1.5));
     const words = scene.narration.split(" ");
     const lines: string[] = [];
     let line = "";
-    const maxW = W - 80;
-    ctx.font = "18px sans-serif";
+    const maxLineW = W - 100;
+    ctx.font = "20px sans-serif";
     for (const word of words) {
       const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width > maxW) {
+      if (ctx.measureText(test).width > maxLineW) {
         lines.push(line);
         line = word;
       } else {
@@ -192,18 +229,22 @@ async function buildMp4FromScenes(
       }
     }
     if (line) lines.push(line);
-    const lineH = 28;
-    const totalH = lines.length * lineH + 24;
-    const ty = H - totalH - 24;
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    const lineH = 30;
+    const totalTextH = lines.length * lineH + 20;
+    const ty = H - totalTextH - 50;
+
+    ctx.globalAlpha = captionAlpha;
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
     ctx.beginPath();
-    ctx.roundRect(30, ty - 10, W - 60, totalH + 10, 12);
+    ctx.roundRect(40, ty - 8, W - 80, totalTextH + 8, 14);
     ctx.fill();
     ctx.fillStyle = "white";
+    ctx.font = "20px sans-serif";
     ctx.textAlign = "center";
     lines.forEach((l, i) => {
-      ctx.fillText(l, W / 2, ty + i * lineH + 18);
+      ctx.fillText(l, W / 2, ty + i * lineH + 22);
     });
+    ctx.globalAlpha = 1;
   }
 
   recorder.start(100);
@@ -219,11 +260,11 @@ async function buildMp4FromScenes(
     for (let f = 0; f < framesInScene; f++) {
       drawFrame(img, scene, si, f, framesInScene);
       framesDone++;
-      if (framesDone % (FPS * 2) === 0) {
+      if (framesDone % (FPS * 4) === 0) {
         onProgress?.(Math.round((framesDone / totalFrames) * 100));
+        // Yield to browser periodically (not every frame — much faster)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
-      // Yield to browser each frame
-      await new Promise<void>((resolve) => setTimeout(resolve, 1000 / FPS));
     }
   }
 
