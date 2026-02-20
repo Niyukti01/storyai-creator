@@ -36,7 +36,8 @@ async function generateSceneImage(
   scene: any,
   characters: any[],
   genre: string,
-  apiKey: string
+  apiKey: string,
+  retries = 2
 ): Promise<{ base64: string | null; url: string | null }> {
   const sceneCharacters = scene.dialogue?.map((d: any) => d.character) || []
   const characterDetails = characters
@@ -44,65 +45,79 @@ async function generateSceneImage(
     .map((c: any) => `${c.name}: ${c.description}`)
     .join('. ')
 
-  const prompt = `Warm storybook illustration. Style: soft 2D animation, pastel colors, rounded characters, big expressive eyes, Pixar-like warmth, child-friendly, magical atmosphere. Setting: ${scene.setting}. Action: ${scene.action || scene.description}. ${characterDetails ? `Characters: ${characterDetails}.` : ''} Genre: ${genre}. Wide 16:9 composition, cozy and lovable.`
+  const prompt = `Cinematic 3D animated scene, Pixar-quality rendering with dramatic lighting and depth. Style: soft 3D animation, volumetric lighting, cinematic color grading, depth of field, warm pastel tones, rounded expressive characters with big eyes, rich detailed environment with foreground/midground/background layers. Setting: ${scene.setting}. Action: ${scene.action || scene.description}. ${characterDetails ? `Characters: ${characterDetails}.` : ''} Genre: ${genre}. Wide 16:9 cinematic composition, dramatic camera angle, cozy magical atmosphere.`
 
-  try {
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-3-pro-image-preview',
-        messages: [{ role: 'user', content: prompt }],
-        modalities: ['image', 'text']
-      }),
-    })
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-3-pro-image-preview',
+          messages: [{ role: 'user', content: prompt }],
+          modalities: ['image', 'text']
+        }),
+      })
 
-    if (!response.ok) {
-      const errText = await response.text()
-      console.error(`Image gen failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
+      if (response.status === 503 && attempt < retries) {
+        console.log(`Image gen 503 for scene ${scene.scene_number}, retrying in 5s (attempt ${attempt + 1})...`)
+        await new Promise(r => setTimeout(r, 5000))
+        continue
+      }
+
+      if (!response.ok) {
+        const errText = await response.text()
+        console.error(`Image gen failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
+        return { base64: null, url: null }
+      }
+
+      const data = await response.json()
+      console.log(`Image response for scene ${scene.scene_number}:`, JSON.stringify(data).slice(0, 300))
+
+      // Try multiple response shapes
+      const parts = data.choices?.[0]?.message?.content
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          if (part.type === 'image_url' && part.image_url?.url) {
+            const url = part.image_url.url
+            if (url.startsWith('data:')) {
+              const b64 = url.split(',')[1]
+              return { base64: b64, url }
+            }
+            return { base64: null, url }
+          }
+          if (part.inlineData?.data) {
+            return { base64: part.inlineData.data, url: `data:image/png;base64,${part.inlineData.data}` }
+          }
+        }
+      }
+
+      // Fallback shapes
+      const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
+        || data.choices?.[0]?.message?.image_url?.url
+      if (imgUrl) {
+        if (imgUrl.startsWith('data:')) {
+          return { base64: imgUrl.split(',')[1], url: imgUrl }
+        }
+        return { base64: null, url: imgUrl }
+      }
+
+      console.error(`No image found in response for scene ${scene.scene_number}`)
+      return { base64: null, url: null }
+    } catch (error) {
+      if (attempt < retries) {
+        console.log(`Image gen exception for scene ${scene.scene_number}, retrying...`)
+        await new Promise(r => setTimeout(r, 3000))
+        continue
+      }
+      console.error(`Image generation exception for scene ${scene.scene_number}:`, error)
       return { base64: null, url: null }
     }
-
-    const data = await response.json()
-    console.log(`Image response for scene ${scene.scene_number}:`, JSON.stringify(data).slice(0, 300))
-
-    // Try multiple response shapes
-    const parts = data.choices?.[0]?.message?.content
-    if (Array.isArray(parts)) {
-      for (const part of parts) {
-        if (part.type === 'image_url' && part.image_url?.url) {
-          const url = part.image_url.url
-          if (url.startsWith('data:')) {
-            const b64 = url.split(',')[1]
-            return { base64: b64, url }
-          }
-          return { base64: null, url }
-        }
-        if (part.inlineData?.data) {
-          return { base64: part.inlineData.data, url: `data:image/png;base64,${part.inlineData.data}` }
-        }
-      }
-    }
-
-    // Fallback shapes
-    const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
-      || data.choices?.[0]?.message?.image_url?.url
-    if (imgUrl) {
-      if (imgUrl.startsWith('data:')) {
-        return { base64: imgUrl.split(',')[1], url: imgUrl }
-      }
-      return { base64: null, url: imgUrl }
-    }
-
-    console.error(`No image found in response for scene ${scene.scene_number}`)
-    return { base64: null, url: null }
-  } catch (error) {
-    console.error(`Image generation exception for scene ${scene.scene_number}:`, error)
-    return { base64: null, url: null }
   }
+  return { base64: null, url: null }
 }
 
 async function uploadImageToStorage(
@@ -307,6 +322,7 @@ serve(async (req) => {
 
     if (ELEVENLABS_API_KEY && successfulScenes.length > 0) {
       // Sequential to avoid rate limits
+      let audioSuccessCount = 0
       for (let i = 0; i < successfulScenes.length; i++) {
         const scene = successfulScenes[i]
         const audioUrl = await generateNarrationAudio(
@@ -317,14 +333,23 @@ serve(async (req) => {
           scene.sceneNumber
         )
         scene.audioUrl = audioUrl
+        if (audioUrl) audioSuccessCount++
+
+        // If first audio attempt fails with auth error, skip remaining
+        if (i === 0 && !audioUrl) {
+          console.log('First audio failed — skipping remaining audio to save time')
+          break
+        }
 
         const audioProgress = 57 + Math.floor(((i + 1) / successfulScenes.length) * 25)
         await supabase.from('projects').update({ video_progress: audioProgress }).eq('id', projectId)
         console.log(`Audio for scene ${scene.sceneNumber}: ${audioUrl ? 'OK' : 'FAILED'}`)
       }
+      console.log(`Audio: ${audioSuccessCount}/${successfulScenes.length} succeeded`)
     } else {
       console.log('Skipping audio: no ElevenLabs key or no successful images')
     }
+    // Audio is optional — pipeline continues regardless
 
     // ============ PHASE 3: Save animation data (85-100%) ============
     console.log('=== PHASE 3: Saving animation data ===')
