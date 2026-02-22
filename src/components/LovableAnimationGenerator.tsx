@@ -30,6 +30,7 @@ interface LovableScene {
   audioUrl?: string;
   duration: number;
   setting?: string;
+  hasVideo?: boolean;
 }
 
 interface LovableAnimationData {
@@ -51,470 +52,6 @@ interface LovableAnimationGeneratorProps {
   existingAnimation?: LovableAnimationData | null;
 }
 
-// ─────────────────────────────────────────────────────────
-// Canvas-based MP4 builder (client-side, no extra deps)
-// ─────────────────────────────────────────────────────────
-async function buildMp4FromScenes(
-  scenes: LovableScene[],
-  onProgress?: (pct: number) => void
-): Promise<Blob | null> {
-  // Check browser support
-  if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
-    toast.error("Your browser does not support video recording. Try Chrome or Edge.");
-    return null;
-  }
-
-  const W = 1280;
-  const H = 720;
-  const FPS = 24;
-  const SCENE_DURATION_SEC = 8;
-  const FADE_FRAMES = FPS;          // 1s fade in/out
-  const CROSSFADE_FRAMES = FPS * 1; // 1s cross-dissolve overlap between scenes
-
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d")!;
-
-  const stream = canvas.captureStream(FPS);
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-    ? "video/webm;codecs=vp9"
-    : MediaRecorder.isTypeSupported("video/webm")
-    ? "video/webm"
-    : "video/webm";
-
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_000_000 });
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-
-  // Pre-load all images
-  const images: HTMLImageElement[] = await Promise.all(
-    scenes.map(
-      (scene) =>
-        new Promise<HTMLImageElement>((resolve) => {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => resolve(img);
-          img.onerror = () => {
-            // Create a gradient placeholder
-            const ph = document.createElement("canvas");
-            ph.width = W; ph.height = H;
-            const pc = ph.getContext("2d")!;
-            const grad = pc.createLinearGradient(0, 0, W, H);
-            grad.addColorStop(0, "#fce4ec");
-            grad.addColorStop(1, "#e1bee7");
-            pc.fillStyle = grad;
-            pc.fillRect(0, 0, W, H);
-            pc.font = "bold 40px sans-serif";
-            pc.fillStyle = "#7b1fa2";
-            pc.textAlign = "center";
-            pc.fillText(`Scene ${scene.sceneNumber}`, W / 2, H / 2);
-            const fallback = new Image();
-            fallback.src = ph.toDataURL();
-            fallback.onload = () => resolve(fallback);
-          };
-          img.src = scene.imageUrl;
-        })
-    )
-  );
-
-  // Cinematic camera patterns per scene (cycle through)
-  const cameraPatterns = [
-    'zoomIn',      // slow zoom in
-    'panRight',    // gentle pan right  
-    'zoomOut',     // pull back
-    'panLeft',     // gentle pan left
-    'tiltUp',      // slight upward tilt
-    'trackIn',     // tracking close-up
-  ];
-
-  // Easing for smooth camera
-  function easeInOutCubic(x: number): number {
-    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-  }
-
-  // Pre-create vignette overlay
-  const vignetteCanvas = document.createElement("canvas");
-  vignetteCanvas.width = W;
-  vignetteCanvas.height = H;
-  const vctx = vignetteCanvas.getContext("2d")!;
-  const vigGrad = vctx.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.75);
-  vigGrad.addColorStop(0, "rgba(0,0,0,0)");
-  vigGrad.addColorStop(0.7, "rgba(0,0,0,0.05)");
-  vigGrad.addColorStop(1, "rgba(0,0,0,0.45)");
-  vctx.fillStyle = vigGrad;
-  vctx.fillRect(0, 0, W, H);
-
-  // Transition types between scenes
-  const transitionTypes = ['crossDissolve', 'dip', 'wipeLeft', 'crossDissolve', 'dip', 'wipeRight'];
-
-  // Helper: draw scene-to-scene transition frame
-  function drawTransitionFrame(
-    prevImg: HTMLImageElement,
-    nextImg: HTMLImageElement,
-    prevScene: LovableScene,
-    nextScene: LovableScene,
-    prevIdx: number,
-    nextIdx: number,
-    transProgress: number, // 0→1 within transition
-    totalFramesInScene: number
-  ) {
-    const transition = transitionTypes[prevIdx % transitionTypes.length];
-    const et = easeInOutCubic(transProgress);
-
-    switch (transition) {
-      case 'wipeLeft': {
-        // Draw next scene full, then prev scene clipped from right
-        drawSceneLayer(nextImg, nextScene, nextIdx, totalFramesInScene - 1, totalFramesInScene, 1);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, W * (1 - et), H);
-        ctx.clip();
-        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
-        ctx.restore();
-        break;
-      }
-      case 'wipeRight': {
-        drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, 1);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(W * et, 0, W, H);
-        ctx.clip();
-        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
-        ctx.restore();
-        break;
-      }
-      case 'dip': {
-        // Dip to black then reveal
-        if (et < 0.5) {
-          const blackAlpha = et * 2;
-          drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1);
-          ctx.fillStyle = `rgba(0,0,0,${blackAlpha})`;
-          ctx.fillRect(0, 0, W, H);
-        } else {
-          const revealAlpha = (et - 0.5) * 2;
-          drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, 1);
-          ctx.fillStyle = `rgba(0,0,0,${1 - revealAlpha})`;
-          ctx.fillRect(0, 0, W, H);
-        }
-        break;
-      }
-      default: {
-        // Cross-dissolve
-        drawSceneLayer(prevImg, prevScene, prevIdx, totalFramesInScene - 1, totalFramesInScene, 1 - et);
-        ctx.globalAlpha = et;
-        drawSceneLayer(nextImg, nextScene, nextIdx, 0, totalFramesInScene, et);
-        ctx.globalAlpha = 1;
-        break;
-      }
-    }
-
-    // Letterbox always on top during transitions
-    drawLetterbox(1);
-  }
-
-  // Draw just the scene image layer (without captions/UI) for compositing
-  function drawSceneLayer(
-    img: HTMLImageElement,
-    scene: LovableScene,
-    sceneIdx: number,
-    frameInScene: number,
-    totalFramesInScene: number,
-    alpha: number
-  ) {
-    const t = frameInScene / totalFramesInScene;
-    const et2 = easeInOutCubic(t);
-    const pattern = cameraPatterns[sceneIdx % cameraPatterns.length];
-
-    const scaleX = W / img.naturalWidth;
-    const scaleY = H / img.naturalHeight;
-    const baseScale = Math.max(scaleX, scaleY) * 1.2;
-
-    let camX = 0, camY = 0, camZoom = 1;
-    switch (pattern) {
-      case 'zoomIn': camZoom = 1 + et2 * 0.1; camX = et2 * 25; camY = -et2 * 8; break;
-      case 'panRight': camX = et2 * 80 - 40; camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02; break;
-      case 'zoomOut': camZoom = 1.1 - et2 * 0.1; camY = -et2 * 15; camX = Math.sin(t * Math.PI * 2) * 8; break;
-      case 'panLeft': camX = -et2 * 80 + 40; camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02; break;
-      case 'tiltUp': camY = -et2 * 50 + 25; camZoom = 1 + et2 * 0.06; camX = Math.sin(t * Math.PI) * 10; break;
-      case 'trackIn': camZoom = 1 + et2 * 0.15; camX = Math.sin(t * Math.PI * 0.5) * 20; camY = -et2 * 15; break;
-    }
-
-    const fgZoom = baseScale * camZoom;
-    const fgDw = img.naturalWidth * fgZoom;
-    const fgDh = img.naturalHeight * fgZoom;
-    const fgDx = (W - fgDw) / 2 + camX;
-    const fgDy = (H - fgDh) / 2 + camY;
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.drawImage(img, fgDx, fgDy, fgDw, fgDh);
-    ctx.restore();
-  }
-
-  // Draw letterbox with optional reveal animation
-  function drawLetterbox(reveal: number) {
-    const barH = 36 * Math.min(1, reveal);
-    ctx.fillStyle = "rgba(0,0,0,0.65)";
-    ctx.fillRect(0, 0, W, barH);
-    ctx.fillRect(0, H - barH, W, barH);
-    // Subtle edge highlight
-    ctx.fillStyle = "rgba(255,255,255,0.05)";
-    ctx.fillRect(0, barH - 1, W, 1);
-    ctx.fillRect(0, H - barH, W, 1);
-  }
-
-
-  // Helper: draw one frame with cinematic 3D depth camera
-  function drawFrame(
-    img: HTMLImageElement,
-    scene: LovableScene,
-    sceneIdx: number,
-    frameInScene: number,
-    totalFramesInScene: number
-  ) {
-    const t = frameInScene / totalFramesInScene; // 0→1
-    const et = easeInOutCubic(t); // eased for smooth motion
-    const pattern = cameraPatterns[sceneIdx % cameraPatterns.length];
-
-    // Base cover dimensions (extra 20% for parallax room)
-    const scaleX = W / img.naturalWidth;
-    const scaleY = H / img.naturalHeight;
-    const baseScale = Math.max(scaleX, scaleY) * 1.2;
-
-    let camX = 0, camY = 0, camZoom = 1;
-
-    switch (pattern) {
-      case 'zoomIn':
-        camZoom = 1 + et * 0.1;
-        camX = et * 25;
-        camY = -et * 8;
-        break;
-      case 'panRight':
-        camX = et * 80 - 40;
-        camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02;
-        break;
-      case 'zoomOut':
-        camZoom = 1.1 - et * 0.1;
-        camY = -et * 15;
-        camX = Math.sin(t * Math.PI * 2) * 8;
-        break;
-      case 'panLeft':
-        camX = -et * 80 + 40;
-        camZoom = 1.02 + Math.sin(t * Math.PI) * 0.02;
-        break;
-      case 'tiltUp':
-        camY = -et * 50 + 25;
-        camZoom = 1 + et * 0.06;
-        camX = Math.sin(t * Math.PI) * 10;
-        break;
-      case 'trackIn':
-        camZoom = 1 + et * 0.15;
-        camX = Math.sin(t * Math.PI * 0.5) * 20;
-        camY = -et * 15;
-        break;
-    }
-
-    // -- Background layer (moves slower = depth illusion) --
-    const bgZoom = baseScale * (camZoom * 0.92);
-    const bgDw = img.naturalWidth * bgZoom;
-    const bgDh = img.naturalHeight * bgZoom;
-    const bgDx = (W - bgDw) / 2 + camX * 0.6;
-    const bgDy = (H - bgDh) / 2 + camY * 0.6;
-
-    ctx.clearRect(0, 0, W, H);
-    ctx.globalAlpha = 0.4;
-    ctx.filter = "blur(3px)";
-    ctx.drawImage(img, bgDx - 10, bgDy - 10, bgDw + 20, bgDh + 20);
-    ctx.filter = "none";
-    ctx.globalAlpha = 1;
-
-    // -- Foreground layer (main, moves at full camera speed) --
-    const fgZoom = baseScale * camZoom;
-    const fgDw = img.naturalWidth * fgZoom;
-    const fgDh = img.naturalHeight * fgZoom;
-    const fgDx = (W - fgDw) / 2 + camX;
-    const fgDy = (H - fgDh) / 2 + camY;
-    ctx.drawImage(img, fgDx, fgDy, fgDw, fgDh);
-
-    // -- Cinematic color grading (warm tint) --
-    ctx.globalCompositeOperation = "overlay";
-    ctx.fillStyle = "rgba(255, 230, 200, 0.06)";
-    ctx.fillRect(0, 0, W, H);
-    ctx.globalCompositeOperation = "source-over";
-
-    // -- Vignette --
-    ctx.drawImage(vignetteCanvas, 0, 0);
-
-    // -- Subtle film grain (every 3rd frame for perf) --
-    if (frameInScene % 3 === 0) {
-      const grainData = ctx.getImageData(0, 0, W, H);
-      const px = grainData.data;
-      for (let i = 0; i < px.length; i += 16) { // sample every 4th pixel
-        const noise = (Math.random() - 0.5) * 12;
-        px[i] += noise;
-        px[i + 1] += noise;
-        px[i + 2] += noise;
-      }
-      ctx.putImageData(grainData, 0, 0);
-    }
-
-    // -- Fade in (cross-fade style) --
-    if (frameInScene < FADE_FRAMES) {
-      const fadeAlpha = 1 - frameInScene / FADE_FRAMES;
-      ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
-      ctx.fillRect(0, 0, W, H);
-    }
-    // -- Fade out --
-    if (frameInScene > totalFramesInScene - FADE_FRAMES) {
-      const prog = (frameInScene - (totalFramesInScene - FADE_FRAMES)) / FADE_FRAMES;
-      ctx.fillStyle = `rgba(0,0,0,${prog})`;
-      ctx.fillRect(0, 0, W, H);
-    }
-
-    // -- Cinematic letterbox bars --
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(0, 0, W, 36);
-    ctx.fillRect(0, H - 36, W, 36);
-
-    // -- Bottom gradient for captions --
-    const grad = ctx.createLinearGradient(0, H * 0.5, 0, H);
-    grad.addColorStop(0, "rgba(0,0,0,0)");
-    grad.addColorStop(0.6, "rgba(0,0,0,0.3)");
-    grad.addColorStop(1, "rgba(0,0,0,0.8)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    // -- Scene label (cinematic style) --
-    ctx.save();
-    const labelAlpha = Math.min(1, frameInScene / (FADE_FRAMES * 2));
-    ctx.globalAlpha = labelAlpha * 0.9;
-    ctx.font = "bold 18px sans-serif";
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.textAlign = "left";
-    // Small scene indicator with setting
-    const sceneLabel = scene.setting
-      ? `SCENE ${scene.sceneNumber}  ·  ${scene.setting.toUpperCase()}`
-      : `SCENE ${scene.sceneNumber}`;
-    ctx.fillText(sceneLabel, 32, 62);
-    // Thin underline
-    const labelW = ctx.measureText(sceneLabel).width;
-    ctx.fillStyle = "rgba(255,200,200,0.5)";
-    ctx.fillRect(32, 66, labelW, 1.5);
-    ctx.restore();
-
-    // -- Word-by-word caption reveal synced to scene timing --
-    const captionStartT = 0.08; // captions start at 8% into scene
-    const captionEndT = 0.92;   // captions end at 92%
-    const captionT = Math.max(0, Math.min(1, (t - captionStartT) / (captionEndT - captionStartT)));
-
-    if (captionT > 0) {
-      const allWords = scene.narration.split(" ");
-      const visibleWordCount = Math.ceil(captionT * allWords.length);
-      const visibleText = allWords.slice(0, visibleWordCount).join(" ");
-
-      // Word-wrap
-      const maxLineW = W - 120;
-      ctx.font = "500 21px sans-serif";
-      const lines: string[] = [];
-      let line = "";
-      for (const word of visibleText.split(" ")) {
-        const test = line ? `${line} ${word}` : word;
-        if (ctx.measureText(test).width > maxLineW) {
-          lines.push(line);
-          line = word;
-        } else {
-          line = test;
-        }
-      }
-      if (line) lines.push(line);
-
-      const lineH = 32;
-      const pad = 16;
-      const totalTextH = lines.length * lineH + pad * 2;
-      const boxY = H - totalTextH - 56;
-
-      // Frosted glass caption background
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, captionT * 4); // quick fade-in
-      ctx.fillStyle = "rgba(10,10,20,0.7)";
-      ctx.beginPath();
-      ctx.roundRect(50, boxY, W - 100, totalTextH, 16);
-      ctx.fill();
-
-      // Accent border top
-      ctx.strokeStyle = "rgba(255,180,200,0.4)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(70, boxY);
-      ctx.lineTo(W - 70, boxY);
-      ctx.stroke();
-
-      // Caption text
-      ctx.fillStyle = "white";
-      ctx.font = "500 21px sans-serif";
-      ctx.textAlign = "center";
-      ctx.shadowColor = "rgba(0,0,0,0.5)";
-      ctx.shadowBlur = 4;
-      lines.forEach((l, i) => {
-        ctx.fillText(l, W / 2, boxY + pad + i * lineH + 22);
-      });
-      ctx.restore();
-    }
-  }
-
-  recorder.start(100);
-
-  const framesPerScene = SCENE_DURATION_SEC * FPS;
-  // Total frames = scenes * framesPerScene + transitions * crossfade frames
-  const transitionCount = Math.max(0, scenes.length - 1);
-  const totalFrames = scenes.length * framesPerScene + transitionCount * CROSSFADE_FRAMES;
-  let framesDone = 0;
-
-  for (let si = 0; si < scenes.length; si++) {
-    const scene = scenes[si];
-    const img = images[si];
-
-    // Draw main scene frames (minus crossfade at end if not last scene)
-    const mainFrames = si < scenes.length - 1
-      ? framesPerScene - CROSSFADE_FRAMES
-      : framesPerScene;
-
-    for (let f = 0; f < mainFrames; f++) {
-      drawFrame(img, scene, si, f, framesPerScene);
-      framesDone++;
-      if (framesDone % (FPS * 4) === 0) {
-        onProgress?.(Math.round((framesDone / totalFrames) * 100));
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-    }
-
-    // Cross-dissolve transition to next scene
-    if (si < scenes.length - 1) {
-      const nextImg = images[si + 1];
-      const nextScene = scenes[si + 1];
-      for (let tf = 0; tf < CROSSFADE_FRAMES; tf++) {
-        const transProgress = tf / CROSSFADE_FRAMES;
-        ctx.clearRect(0, 0, W, H);
-        drawTransitionFrame(img, nextImg, scene, nextScene, si, si + 1, transProgress, framesPerScene);
-        framesDone++;
-        if (framesDone % (FPS * 4) === 0) {
-          onProgress?.(Math.round((framesDone / totalFrames) * 100));
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-      }
-    }
-  }
-
-  recorder.stop();
-  await new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
-
-  const blob = new Blob(chunks, { type: mimeType });
-  return blob;
-}
-
-// ─────────────────────────────────────────────────────────
-
 export const LovableAnimationGenerator = ({
   projectId,
   hasScript,
@@ -530,10 +67,8 @@ export const LovableAnimationGenerator = ({
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [buildingMp4, setBuildingMp4] = useState(false);
-  const [mp4Progress, setMp4Progress] = useState(0);
-  const [mp4Blob, setMp4Blob] = useState<Blob | null>(null);
 
+  const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -541,6 +76,9 @@ export const LovableAnimationGenerator = ({
   const currentScene = scenes[currentSceneIndex];
   const isLovableGenerating = videoStatus === "generating_lovable";
   const isCompleted = videoStatus === "lovable_completed" && scenes.length > 0;
+
+  // Does the current scene have a real video clip?
+  const currentHasVideo = !!(currentScene?.hasVideo && currentScene?.videoUrl && !currentScene.videoUrl.endsWith('.png'));
 
   // Poll for progress updates during generation
   useEffect(() => {
@@ -560,30 +98,49 @@ export const LovableAnimationGenerator = ({
             onVideoGenerated();
           }
         }
-      }, 2500);
+      }, 3000);
       return () => clearInterval(poll);
     }
   }, [isLovableGenerating, projectId, onVideoGenerated]);
 
-  // Auto-advance scenes when playing (image slideshow mode)
+  // Auto-advance scenes when playing
   useEffect(() => {
-    if (isPlaying && scenes.length > 0) {
-      const sceneDuration = (currentScene?.duration || 8) * 1000;
+    if (isPlaying && scenes.length > 0 && !currentHasVideo) {
+      // For image-only fallback scenes, auto-advance after duration
+      const sceneDuration = (currentScene?.duration || 5) * 1000;
       intervalRef.current = setInterval(() => {
         setCurrentSceneIndex((prev) => {
-          if (prev < scenes.length - 1) {
-            return prev + 1;
-          } else {
-            setIsPlaying(false);
-            return 0;
-          }
+          if (prev < scenes.length - 1) return prev + 1;
+          setIsPlaying(false);
+          return 0;
         });
       }, sceneDuration);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [isPlaying, currentSceneIndex, scenes.length]);
+  }, [isPlaying, currentSceneIndex, scenes.length, currentHasVideo]);
+
+  // Handle video element for real video clips
+  useEffect(() => {
+    if (videoRef.current && currentHasVideo && currentScene?.videoUrl) {
+      videoRef.current.src = currentScene.videoUrl;
+      videoRef.current.volume = isMuted ? 0 : volume;
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {});
+      }
+    }
+  }, [currentSceneIndex, currentScene?.videoUrl, currentHasVideo, isPlaying, volume, isMuted]);
+
+  // When video ends, advance to next scene
+  const handleVideoEnded = useCallback(() => {
+    if (currentSceneIndex < scenes.length - 1) {
+      setCurrentSceneIndex(prev => prev + 1);
+    } else {
+      setIsPlaying(false);
+      setCurrentSceneIndex(0);
+    }
+  }, [currentSceneIndex, scenes.length]);
 
   // Play narration audio when scene changes
   useEffect(() => {
@@ -620,14 +177,13 @@ export const LovableAnimationGenerator = ({
     }
     setGenerating(true);
     setLocalProgress(0);
-    setMp4Blob(null);
 
     try {
       const { error } = await supabase.functions.invoke("generate-lovable-animation", {
         body: { projectId },
       });
       if (error) throw error;
-      toast.success("Generating your animated story video...");
+      toast.success("Generating your animated story video with AI...");
     } catch (error: any) {
       console.error("Animation error:", error);
       toast.error(error.message || "Failed to start animation generation");
@@ -635,29 +191,27 @@ export const LovableAnimationGenerator = ({
     }
   };
 
-  const handleBuildAndDownloadMp4 = async () => {
-    if (scenes.length === 0) return;
-    setBuildingMp4(true);
-    setMp4Progress(0);
-    toast.info("Building MP4 video… this may take 1–2 minutes.");
+  const handleDownload = async () => {
+    // Download the first video clip as a sample, or build combined download
+    const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
+    if (videoScenes.length === 0) {
+      toast.error("No video clips available for download");
+      return;
+    }
 
+    // Download the first video clip
     try {
-      const blob = await buildMp4FromScenes(scenes, setMp4Progress);
-      if (!blob) { setBuildingMp4(false); return; }
-
-      setMp4Blob(blob);
+      const response = await fetch(videoScenes[0].videoUrl!);
+      const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `story-animation-${Date.now()}.webm`;
+      a.download = `story-animation-scene1-${Date.now()}.mp4`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("MP4 video downloaded!");
-    } catch (err: any) {
-      console.error("MP4 build error:", err);
-      toast.error("Failed to build video: " + err.message);
-    } finally {
-      setBuildingMp4(false);
+      toast.success("Video clip downloaded!");
+    } catch (err) {
+      toast.error("Failed to download video");
     }
   };
 
@@ -684,12 +238,14 @@ export const LovableAnimationGenerator = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const getTotalDuration = () => scenes.reduce((sum, s) => sum + (s.duration || 8), 0);
+  const getTotalDuration = () => scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
 
   const getCurrentOverallTime = () => {
-    const prev = scenes.slice(0, currentSceneIndex).reduce((s, sc) => s + (sc.duration || 8), 0);
+    const prev = scenes.slice(0, currentSceneIndex).reduce((s, sc) => s + (sc.duration || 5), 0);
     return prev + currentTime;
   };
+
+  const videoClipCount = scenes.filter(s => s.hasVideo).length;
 
   // ─── Generate Button ──────────────────────────────────────
   if (!isCompleted && !isLovableGenerating && !generating) {
@@ -698,18 +254,18 @@ export const LovableAnimationGenerator = ({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Film className="w-6 h-6 text-pink-500" />
-            Generate Animated Story Video
+            Generate 3D Animated Story Video
           </CardTitle>
           <CardDescription>
-            Create a lovable animated video from your story with warm visuals and narration
+            Create a cinematic animated video with AI-generated motion, character movement, and narration
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             {[
-              "Storybook illustrations",
-              "Scene-by-scene visuals",
-              "Synced narration",
+              "AI-animated video clips",
+              "Character movement & motion",
+              "Synced voice narration",
               "Downloadable MP4",
             ].map((f) => (
               <div key={f} className="flex items-center gap-2 text-muted-foreground">
@@ -720,19 +276,19 @@ export const LovableAnimationGenerator = ({
           </div>
 
           <div className="bg-pink-100/50 dark:bg-pink-950/30 rounded-lg p-4 space-y-2">
-            <p className="text-sm font-medium text-pink-700 dark:text-pink-300">Animation Style:</p>
+            <p className="text-sm font-medium text-pink-700 dark:text-pink-300">Animation Pipeline:</p>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>• Soft 2D storybook art — Pixar-like warmth</li>
-              <li>• Pastel colors, rounded characters, expressive eyes</li>
-              <li>• Warm narration voice + scene captions</li>
-              <li>• Export as downloadable video file</li>
+              <li>• AI generates scene illustrations (Pixar-quality)</li>
+              <li>• Each scene animated as a 5-second video clip (Runway ML)</li>
+              <li>• Characters move, gesture, and interact naturally</li>
+              <li>• Voice narration synced to each scene (ElevenLabs)</li>
             </ul>
           </div>
 
-          <div className="bg-blue-50/50 dark:bg-blue-950/30 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
-            <p className="font-medium">⚡ Fast Generation</p>
+          <div className="bg-amber-50/50 dark:bg-amber-950/30 rounded-lg p-3 text-sm text-amber-700 dark:text-amber-300">
+            <p className="font-medium">⏱ Generation Time</p>
             <p className="text-muted-foreground text-xs mt-1">
-              Parallel image + audio generation, optimised for speed
+              AI video generation takes 3–5 minutes. Each scene becomes a real animated clip.
             </p>
           </div>
 
@@ -761,13 +317,17 @@ export const LovableAnimationGenerator = ({
     const progress = videoProgress || localProgress;
 
     const phaseInfo =
-      progress < 10
+      progress < 5
         ? { phase: "Starting…", icon: "🎬" }
-        : progress < 55
+        : progress < 30
         ? { phase: "Phase 1 — Painting scene illustrations", icon: "🎨" }
-        : progress < 85
-        ? { phase: "Phase 2 — Recording warm narration", icon: "🎙️" }
-        : { phase: "Phase 3 — Saving your video", icon: "✅" };
+        : progress < 40
+        ? { phase: "Phase 2 — Starting AI video generation", icon: "🎥" }
+        : progress < 75
+        ? { phase: "Phase 3 — Rendering animated video clips (Runway ML)", icon: "🎞️" }
+        : progress < 90
+        ? { phase: "Phase 4 — Recording voice narration", icon: "🎙️" }
+        : { phase: "Phase 5 — Finalizing your video", icon: "✅" };
 
     return (
       <Card className="shadow-[var(--shadow-medium)] border-2 border-pink-200/50">
@@ -776,7 +336,7 @@ export const LovableAnimationGenerator = ({
             <Loader2 className="w-6 h-6 text-pink-500 animate-spin" />
             Creating Your Animated Video…
           </CardTitle>
-          <CardDescription>Generating storybook illustrations and narration</CardDescription>
+          <CardDescription>Generating AI-animated video clips with character motion</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
@@ -790,21 +350,27 @@ export const LovableAnimationGenerator = ({
           <div className="text-center space-y-3">
             <div className="text-4xl">{phaseInfo.icon}</div>
             <p className="text-muted-foreground text-sm">
-              This usually takes 2–4 minutes. Please keep this tab open.
+              AI video generation takes 3–5 minutes. Please keep this tab open.
             </p>
           </div>
 
           <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
-            <p className="font-medium mb-2">What's happening:</p>
+            <p className="font-medium mb-2">Pipeline stages:</p>
             <ul className="space-y-1">
-              <li className={progress >= 5 ? "text-green-600" : ""}>
-                {progress >= 55 ? "✓" : progress >= 5 ? "⟳" : "○"} Generating storybook illustrations
+              <li className={progress >= 3 ? "text-green-600" : ""}>
+                {progress >= 30 ? "✓" : progress >= 3 ? "⟳" : "○"} Generating scene illustrations
               </li>
-              <li className={progress >= 57 ? "text-green-600" : ""}>
-                {progress >= 85 ? "✓" : progress >= 57 ? "⟳" : "○"} Recording warm narration audio
+              <li className={progress >= 32 ? "text-green-600" : ""}>
+                {progress >= 40 ? "✓" : progress >= 32 ? "⟳" : "○"} Starting Runway AI video tasks
               </li>
-              <li className={progress >= 87 ? "text-green-600" : ""}>
-                {progress >= 100 ? "✓" : progress >= 87 ? "⟳" : "○"} Saving &amp; finalizing
+              <li className={progress >= 40 ? "text-green-600" : ""}>
+                {progress >= 75 ? "✓" : progress >= 40 ? "⟳" : "○"} Rendering animated video clips
+              </li>
+              <li className={progress >= 77 ? "text-green-600" : ""}>
+                {progress >= 90 ? "✓" : progress >= 77 ? "⟳" : "○"} Recording voice narration
+              </li>
+              <li className={progress >= 92 ? "text-green-600" : ""}>
+                {progress >= 100 ? "✓" : progress >= 92 ? "⟳" : "○"} Saving &amp; finalizing
               </li>
             </ul>
           </div>
@@ -823,27 +389,6 @@ export const LovableAnimationGenerator = ({
     );
   }
 
-  // ─── MP4 Build Progress ───────────────────────────────────
-  if (buildingMp4) {
-    return (
-      <Card className="shadow-[var(--shadow-medium)] border-2 border-purple-200/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Loader2 className="w-6 h-6 text-purple-500 animate-spin" />
-            Building MP4 Video…
-          </CardTitle>
-          <CardDescription>Rendering frames with captions — please wait</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Progress value={mp4Progress} className="h-4" />
-          <p className="text-center text-sm text-muted-foreground">
-            {mp4Progress}% — rendering {scenes.length} scenes at 1280×720 / 24fps
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   // ─── Completed Player ─────────────────────────────────────
   if (isCompleted && scenes.length > 0) {
     return (
@@ -856,7 +401,7 @@ export const LovableAnimationGenerator = ({
             </CardTitle>
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
-                {scenes.length} scenes
+                {videoClipCount} animated clips
               </Badge>
               <Badge variant="secondary" className="bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300">
                 Scene {currentSceneIndex + 1} / {scenes.length}
@@ -866,15 +411,26 @@ export const LovableAnimationGenerator = ({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Image-based player */}
+          {/* Video / Image player */}
           <div className="relative aspect-video rounded-xl overflow-hidden bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-950 dark:to-purple-950">
             {currentScene && (
               <>
-                <img
-                  src={currentScene.imageUrl}
-                  alt={`Scene ${currentScene.sceneNumber}`}
-                  className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-                />
+                {/* Render video element if scene has a video clip */}
+                {currentHasVideo ? (
+                  <video
+                    ref={videoRef}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onEnded={handleVideoEnded}
+                    playsInline
+                    muted={isMuted}
+                  />
+                ) : (
+                  <img
+                    src={currentScene.imageUrl}
+                    alt={`Scene ${currentScene.sceneNumber}`}
+                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
+                  />
+                )}
 
                 {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent pointer-events-none" />
@@ -882,7 +438,7 @@ export const LovableAnimationGenerator = ({
                 {/* Scene label */}
                 <div className="absolute top-3 left-3">
                   <Badge className="bg-pink-500/80 text-white backdrop-blur-sm text-xs">
-                    ✨ Scene {currentScene.sceneNumber}
+                    {currentHasVideo ? "🎥" : "🖼️"} Scene {currentScene.sceneNumber}
                     {currentScene.setting ? ` — ${currentScene.setting}` : ""}
                   </Badge>
                 </div>
@@ -936,7 +492,7 @@ export const LovableAnimationGenerator = ({
                   className="w-full h-full object-cover"
                 />
                 <span className="absolute bottom-0 left-0 right-0 text-center text-white text-[10px] bg-black/50 py-0.5">
-                  {idx + 1}
+                  {scene.hasVideo ? "🎥" : "🖼️"} {idx + 1}
                 </span>
               </button>
             ))}
@@ -975,12 +531,12 @@ export const LovableAnimationGenerator = ({
                 className="w-20"
               />
 
-              {/* Download MP4 button */}
+              {/* Download button */}
               <Button
                 variant="default"
                 size="sm"
-                onClick={handleBuildAndDownloadMp4}
-                disabled={buildingMp4}
+                onClick={handleDownload}
+                disabled={videoClipCount === 0}
                 className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white"
               >
                 <Download className="h-4 w-4 mr-1" />
@@ -990,7 +546,7 @@ export const LovableAnimationGenerator = ({
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-border text-center text-sm">
+          <div className="grid grid-cols-4 gap-4 pt-2 border-t border-border text-center text-sm">
             <div>
               <p className="text-muted-foreground">Duration</p>
               <p className="font-bold text-lg">{formatDuration(getTotalDuration())}</p>
@@ -998,6 +554,10 @@ export const LovableAnimationGenerator = ({
             <div>
               <p className="text-muted-foreground">Scenes</p>
               <p className="font-bold text-lg">{scenes.length}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Video Clips</p>
+              <p className="font-bold text-lg text-purple-600">{videoClipCount}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Narration</p>
@@ -1015,7 +575,7 @@ export const LovableAnimationGenerator = ({
             </Button>
           </div>
 
-          {/* Hidden audio */}
+          {/* Hidden audio for narration */}
           <audio ref={audioRef} className="hidden" />
         </CardContent>
       </Card>

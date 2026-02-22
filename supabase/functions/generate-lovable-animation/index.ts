@@ -1,18 +1,19 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.81.1'
-import { encode as base64Encode } from 'https://deno.land/std@0.168.0/encoding/base64.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 }
 
-const MAX_SCENES = 6
+const MAX_SCENES = 5
+const RUNWAY_API = 'https://api.dev.runwayml.com/v1'
+const RUNWAY_VERSION = '2024-11-06'
 
 interface SceneData {
   sceneNumber: number
-  imageBase64: string | null
   imageUrl: string | null
+  videoUrl: string | null
   narration: string
   audioUrl: string | null
   duration: number
@@ -32,6 +33,7 @@ function optimizeScenes(scenes: any[], max: number): any[] {
     .map((s, i) => ({ ...s, scene_number: i + 1 }))
 }
 
+// Generate a scene illustration using Lovable AI (Gemini image model)
 async function generateSceneImage(
   scene: any,
   characters: any[],
@@ -63,7 +65,7 @@ async function generateSceneImage(
       })
 
       if (response.status === 503 && attempt < retries) {
-        console.log(`Image gen 503 for scene ${scene.scene_number}, retrying in 5s (attempt ${attempt + 1})...`)
+        console.log(`Image gen 503 for scene ${scene.scene_number}, retrying in 5s...`)
         await new Promise(r => setTimeout(r, 5000))
         continue
       }
@@ -75,7 +77,6 @@ async function generateSceneImage(
       }
 
       const data = await response.json()
-      console.log(`Image response for scene ${scene.scene_number}:`, JSON.stringify(data).slice(0, 300))
 
       // Try multiple response shapes
       const parts = data.choices?.[0]?.message?.content
@@ -84,8 +85,7 @@ async function generateSceneImage(
           if (part.type === 'image_url' && part.image_url?.url) {
             const url = part.image_url.url
             if (url.startsWith('data:')) {
-              const b64 = url.split(',')[1]
-              return { base64: b64, url }
+              return { base64: url.split(',')[1], url }
             }
             return { base64: null, url }
           }
@@ -95,7 +95,6 @@ async function generateSceneImage(
         }
       }
 
-      // Fallback shapes
       const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
         || data.choices?.[0]?.message?.image_url?.url
       if (imgUrl) {
@@ -109,7 +108,6 @@ async function generateSceneImage(
       return { base64: null, url: null }
     } catch (error) {
       if (attempt < retries) {
-        console.log(`Image gen exception for scene ${scene.scene_number}, retrying...`)
         await new Promise(r => setTimeout(r, 3000))
         continue
       }
@@ -120,6 +118,7 @@ async function generateSceneImage(
   return { base64: null, url: null }
 }
 
+// Upload base64 image to storage & return public URL
 async function uploadImageToStorage(
   base64Data: string,
   supabase: any,
@@ -129,13 +128,10 @@ async function uploadImageToStorage(
   try {
     const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
     const fileName = `${projectId}/scene-${sceneNumber}-${Date.now()}.png`
-    
+
     const { error } = await supabase.storage
       .from('generated-videos')
-      .upload(fileName, binaryData, {
-        contentType: 'image/png',
-        upsert: true
-      })
+      .upload(fileName, binaryData, { contentType: 'image/png', upsert: true })
 
     if (error) {
       console.error(`Image upload error for scene ${sceneNumber}:`, error)
@@ -150,6 +146,130 @@ async function uploadImageToStorage(
   }
 }
 
+// Start a Runway image-to-video task, returns task ID
+async function startRunwayVideoTask(
+  imageUrl: string,
+  scene: any,
+  runwayApiKey: string
+): Promise<string | null> {
+  const promptText = `Animate this scene with natural character movement, gentle gestures, blinking, subtle body motion, cinematic camera pan. ${scene.action || scene.description}. Smooth cinematic motion, soft lighting.`
+
+  try {
+    const response = await fetch(`${RUNWAY_API}/image_to_video`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${runwayApiKey}`,
+        'Content-Type': 'application/json',
+        'X-Runway-Version': RUNWAY_VERSION,
+      },
+      body: JSON.stringify({
+        model: 'gen4_turbo',
+        promptImage: imageUrl,
+        promptText,
+        duration: 5,
+        ratio: '1280:720',
+      }),
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error(`Runway task start failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
+      return null
+    }
+
+    const data = await response.json()
+    console.log(`Runway task started for scene ${scene.scene_number}: ${data.id}`)
+    return data.id || null
+  } catch (err) {
+    console.error(`Runway task exception for scene ${scene.scene_number}:`, err)
+    return null
+  }
+}
+
+// Poll Runway task until SUCCEEDED or FAILED (max ~3 minutes per task)
+async function pollRunwayTask(
+  taskId: string,
+  runwayApiKey: string,
+  maxPollSeconds = 180
+): Promise<string | null> {
+  const start = Date.now()
+  const pollInterval = 10000 // 10s
+
+  while ((Date.now() - start) < maxPollSeconds * 1000) {
+    try {
+      const response = await fetch(`${RUNWAY_API}/tasks/${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${runwayApiKey}`,
+          'X-Runway-Version': RUNWAY_VERSION,
+        },
+      })
+
+      if (!response.ok) {
+        console.error(`Runway poll error: ${response.status}`)
+        await new Promise(r => setTimeout(r, pollInterval))
+        continue
+      }
+
+      const data = await response.json()
+      console.log(`Runway task ${taskId} status: ${data.status}`)
+
+      if (data.status === 'SUCCEEDED') {
+        // output is array of video URLs
+        const videoUrl = Array.isArray(data.output) ? data.output[0] : data.output
+        return videoUrl || null
+      }
+
+      if (data.status === 'FAILED') {
+        console.error(`Runway task ${taskId} failed:`, data.failure || data.failureCode)
+        return null
+      }
+
+      // PENDING, THROTTLED, RUNNING — keep polling
+    } catch (err) {
+      console.error(`Runway poll exception:`, err)
+    }
+
+    await new Promise(r => setTimeout(r, pollInterval))
+  }
+
+  console.error(`Runway task ${taskId} timed out after ${maxPollSeconds}s`)
+  return null
+}
+
+// Download a video from URL and upload to Supabase storage
+async function uploadVideoToStorage(
+  videoUrl: string,
+  supabase: any,
+  projectId: string,
+  sceneNumber: number
+): Promise<string | null> {
+  try {
+    const response = await fetch(videoUrl)
+    if (!response.ok) {
+      console.error(`Failed to download video for scene ${sceneNumber}: ${response.status}`)
+      return null
+    }
+    const videoBuffer = await response.arrayBuffer()
+    const fileName = `${projectId}/scene-video-${sceneNumber}-${Date.now()}.mp4`
+
+    const { error } = await supabase.storage
+      .from('generated-videos')
+      .upload(fileName, videoBuffer, { contentType: 'video/mp4', upsert: true })
+
+    if (error) {
+      console.error(`Video upload error for scene ${sceneNumber}:`, error)
+      return null
+    }
+
+    const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
+    return data.publicUrl
+  } catch (err) {
+    console.error(`Video upload exception for scene ${sceneNumber}:`, err)
+    return null
+  }
+}
+
+// Generate narration audio via ElevenLabs TTS
 async function generateNarrationAudio(
   text: string,
   apiKey: string,
@@ -157,7 +277,7 @@ async function generateNarrationAudio(
   projectId: string,
   sceneNumber: number
 ): Promise<string | null> {
-  const voiceId = 'pFZP5JQG7iQjIQuC4Bku' // Lily - warm and friendly
+  const voiceId = 'pFZP5JQG7iQjIQuC4Bku' // Lily
 
   try {
     const response = await fetch(
@@ -171,19 +291,13 @@ async function generateNarrationAudio(
         body: JSON.stringify({
           text: shortenNarration(text, 45),
           model_id: 'eleven_multilingual_v2',
-          voice_settings: {
-            stability: 0.65,
-            similarity_boost: 0.75,
-            style: 0.35,
-            use_speaker_boost: true,
-          }
+          voice_settings: { stability: 0.65, similarity_boost: 0.75, style: 0.35, use_speaker_boost: true }
         }),
       }
     )
 
     if (!response.ok) {
-      const errText = await response.text()
-      console.error(`ElevenLabs error for scene ${sceneNumber}: ${response.status} ${errText}`)
+      console.error(`ElevenLabs error for scene ${sceneNumber}: ${response.status}`)
       return null
     }
 
@@ -192,10 +306,7 @@ async function generateNarrationAudio(
 
     const { error } = await supabase.storage
       .from('generated-videos')
-      .upload(fileName, audioBuffer, {
-        contentType: 'audio/mpeg',
-        upsert: true
-      })
+      .upload(fileName, audioBuffer, { contentType: 'audio/mpeg', upsert: true })
 
     if (error) {
       console.error(`Audio upload error:`, error)
@@ -205,7 +316,7 @@ async function generateNarrationAudio(
     const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
     return data.publicUrl
   } catch (err) {
-    console.error(`Narration generation exception for scene ${sceneNumber}:`, err)
+    console.error(`Narration exception for scene ${sceneNumber}:`, err)
     return null
   }
 }
@@ -226,19 +337,14 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    console.log('=== Starting animated video generation for project:', projectId)
+    console.log('=== Starting ANIMATED VIDEO generation for project:', projectId)
 
-    // Fetch project
     const { data: project, error: projectError } = await supabase
-      .from('projects')
-      .select('*')
-      .eq('id', projectId)
-      .single()
+      .from('projects').select('*').eq('id', projectId).single()
 
     if (projectError || !project) throw new Error('Project not found')
     if (!project.script) throw new Error('Project does not have a script')
 
-    // Update status
     await supabase.from('projects').update({
       video_status: 'generating_lovable',
       video_progress: 2,
@@ -249,22 +355,22 @@ serve(async (req) => {
     const script = project.script
     let scenes = script.scenes || []
     const characters = script.characters || []
-
     scenes = optimizeScenes(scenes, MAX_SCENES)
     console.log(`Processing ${scenes.length} scenes`)
 
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
     const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY')
+    const RUNWAY_API_KEY = Deno.env.get('RUNWAY_API_KEY')
 
     if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured')
+    if (!RUNWAY_API_KEY) throw new Error('RUNWAY_API_KEY is not configured')
 
     const sceneDataList: SceneData[] = []
 
-    // ============ PHASE 1: Images (0-55%) ============
+    // ============ PHASE 1: Generate scene images (0-30%) ============
     console.log('=== PHASE 1: Generating scene images ===')
-    
-    const BATCH_SIZE = 2
-    for (let b = 0; b < Math.ceil(scenes.length / BATCH_SIZE); b++) {
+
+    for (let i = 0; i < scenes.length; i++) {
       // Check cancellation
       const { data: check } = await supabase
         .from('projects').select('video_generation_cancelled').eq('id', projectId).single()
@@ -275,107 +381,131 @@ serve(async (req) => {
         })
       }
 
-      const batchScenes = scenes.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE)
-      
-      const batchResults = await Promise.all(
-        batchScenes.map(async (scene: any) => {
-          const { base64, url } = await generateSceneImage(scene, characters, project.genre, LOVABLE_API_KEY)
+      const scene = scenes[i]
+      const { base64, url } = await generateSceneImage(scene, characters, project.genre, LOVABLE_API_KEY)
 
-          // Upload to storage if we have base64
-          let storedUrl = url
-          if (base64 && !url?.startsWith('http')) {
-            storedUrl = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
-          }
+      let storedUrl = url
+      if (base64) {
+        const uploaded = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
+        if (uploaded) storedUrl = uploaded
+      }
 
-          const dialogueText = scene.dialogue
-            ?.map((d: any) => `${d.character}: "${d.line}"`)
-            .join(' ') || ''
-          const narration = shortenNarration(
-            `${scene.description}. ${dialogueText}`.trim(), 50
-          )
+      const dialogueText = scene.dialogue?.map((d: any) => `${d.character}: "${d.line}"`).join(' ') || ''
+      const narration = shortenNarration(`${scene.description}. ${dialogueText}`.trim(), 50)
 
-          return {
-            sceneNumber: scene.scene_number,
-            imageBase64: base64,
-            imageUrl: storedUrl || url,
-            narration,
-            audioUrl: null,
-            duration: 8,
-            setting: scene.setting || ''
-          } as SceneData
-        })
-      )
+      sceneDataList.push({
+        sceneNumber: scene.scene_number,
+        imageUrl: storedUrl || url,
+        videoUrl: null,
+        narration,
+        audioUrl: null,
+        duration: 5,
+        setting: scene.setting || ''
+      })
 
-      sceneDataList.push(...batchResults)
-
-      const imgProgress = 5 + Math.floor(((b + 1) / Math.ceil(scenes.length / BATCH_SIZE)) * 50)
+      const imgProgress = 3 + Math.floor(((i + 1) / scenes.length) * 27)
       await supabase.from('projects').update({ video_progress: imgProgress }).eq('id', projectId)
-      console.log(`Image batch ${b + 1} done. Progress: ${imgProgress}%`)
+      console.log(`Image ${i + 1}/${scenes.length} done. Progress: ${imgProgress}%`)
     }
 
-    const successfulScenes = sceneDataList.filter(s => s.imageUrl)
-    console.log(`${successfulScenes.length}/${scenes.length} images generated`)
+    const scenesWithImages = sceneDataList.filter(s => s.imageUrl)
+    console.log(`${scenesWithImages.length}/${scenes.length} images generated`)
 
-    // ============ PHASE 2: Narration Audio (55-85%) ============
-    console.log('=== PHASE 2: Generating narration audio ===')
-    await supabase.from('projects').update({ video_progress: 57 }).eq('id', projectId)
+    // ============ PHASE 2: Start Runway video tasks (30-40%) ============
+    console.log('=== PHASE 2: Starting Runway video generation tasks ===')
+    await supabase.from('projects').update({ video_progress: 32 }).eq('id', projectId)
 
-    if (ELEVENLABS_API_KEY && successfulScenes.length > 0) {
-      // Sequential to avoid rate limits
-      let audioSuccessCount = 0
-      for (let i = 0; i < successfulScenes.length; i++) {
-        const scene = successfulScenes[i]
+    const taskMap: { sceneNumber: number; taskId: string | null; imageUrl: string }[] = []
+
+    for (const scene of scenesWithImages) {
+      if (!scene.imageUrl) continue
+      const taskId = await startRunwayVideoTask(scene.imageUrl, scenes.find((s: any) => s.scene_number === scene.sceneNumber) || {}, RUNWAY_API_KEY)
+      taskMap.push({ sceneNumber: scene.sceneNumber, taskId, imageUrl: scene.imageUrl! })
+
+      // Small delay between task starts to avoid rate limits
+      await new Promise(r => setTimeout(r, 1500))
+    }
+
+    const activeTasks = taskMap.filter(t => t.taskId)
+    console.log(`${activeTasks.length} Runway tasks started`)
+    await supabase.from('projects').update({ video_progress: 40 }).eq('id', projectId)
+
+    // ============ PHASE 3: Poll Runway tasks until complete (40-75%) ============
+    console.log('=== PHASE 3: Polling Runway tasks for completion ===')
+
+    for (let i = 0; i < activeTasks.length; i++) {
+      const task = activeTasks[i]
+      const videoUrl = await pollRunwayTask(task.taskId!, RUNWAY_API_KEY)
+
+      if (videoUrl) {
+        // Download and upload to our storage
+        const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
+        const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
+        if (sceneData) {
+          sceneData.videoUrl = storedVideoUrl || videoUrl
+        }
+        console.log(`Scene ${task.sceneNumber} video ready: ${storedVideoUrl ? 'stored' : 'direct URL'}`)
+      } else {
+        console.log(`Scene ${task.sceneNumber} video failed — will use image fallback`)
+      }
+
+      const videoProgress = 40 + Math.floor(((i + 1) / activeTasks.length) * 35)
+      await supabase.from('projects').update({ video_progress: videoProgress }).eq('id', projectId)
+    }
+
+    const scenesWithVideo = sceneDataList.filter(s => s.videoUrl)
+    console.log(`${scenesWithVideo.length}/${scenesWithImages.length} video clips generated`)
+
+    // ============ PHASE 4: Narration Audio via ElevenLabs (75-90%) ============
+    console.log('=== PHASE 4: Generating narration audio ===')
+    await supabase.from('projects').update({ video_progress: 77 }).eq('id', projectId)
+
+    if (ELEVENLABS_API_KEY && scenesWithImages.length > 0) {
+      for (let i = 0; i < scenesWithImages.length; i++) {
+        const scene = scenesWithImages[i]
         const audioUrl = await generateNarrationAudio(
-          scene.narration,
-          ELEVENLABS_API_KEY,
-          supabase,
-          projectId,
-          scene.sceneNumber
+          scene.narration, ELEVENLABS_API_KEY, supabase, projectId, scene.sceneNumber
         )
         scene.audioUrl = audioUrl
-        if (audioUrl) audioSuccessCount++
 
-        // If first audio attempt fails with auth error, skip remaining
+        // If first audio fails, skip rest
         if (i === 0 && !audioUrl) {
-          console.log('First audio failed — skipping remaining audio to save time')
+          console.log('First audio failed — skipping remaining')
           break
         }
 
-        const audioProgress = 57 + Math.floor(((i + 1) / successfulScenes.length) * 25)
+        const audioProgress = 77 + Math.floor(((i + 1) / scenesWithImages.length) * 13)
         await supabase.from('projects').update({ video_progress: audioProgress }).eq('id', projectId)
-        console.log(`Audio for scene ${scene.sceneNumber}: ${audioUrl ? 'OK' : 'FAILED'}`)
       }
-      console.log(`Audio: ${audioSuccessCount}/${successfulScenes.length} succeeded`)
     } else {
-      console.log('Skipping audio: no ElevenLabs key or no successful images')
+      console.log('Skipping audio: no ElevenLabs key or no images')
     }
-    // Audio is optional — pipeline continues regardless
 
-    // ============ PHASE 3: Save animation data (85-100%) ============
-    console.log('=== PHASE 3: Saving animation data ===')
-    await supabase.from('projects').update({ video_progress: 87 }).eq('id', projectId)
+    // ============ PHASE 5: Save animation data (90-100%) ============
+    console.log('=== PHASE 5: Saving animation data ===')
+    await supabase.from('projects').update({ video_progress: 92 }).eq('id', projectId)
 
-    const totalDuration = successfulScenes.reduce((s, sc) => s + sc.duration, 0)
+    const totalDuration = scenesWithImages.reduce((s, sc) => s + sc.duration, 0)
     const generationTimeSec = Math.round((Date.now() - startTime) / 1000)
 
     const lovableAnimationData = {
       type: 'lovable_animation',
-      scenes: successfulScenes.map(s => ({
+      scenes: scenesWithImages.map(s => ({
         sceneNumber: s.sceneNumber,
         imageUrl: s.imageUrl,
-        videoUrl: s.imageUrl, // client will build MP4 from images
+        videoUrl: s.videoUrl || s.imageUrl, // fallback to image if no video
         narration: s.narration,
         audioUrl: s.audioUrl,
         duration: s.duration,
-        setting: s.setting
+        setting: s.setting,
+        hasVideo: !!s.videoUrl,
       })),
       totalDuration,
-      totalScenes: successfulScenes.length,
-      videosGenerated: successfulScenes.length,
-      isFullAnimation: true,
+      totalScenes: scenesWithImages.length,
+      videosGenerated: scenesWithVideo.length,
+      isFullAnimation: scenesWithVideo.length > 0,
       generatedAt: new Date().toISOString(),
       generationTimeSeconds: generationTimeSec,
-      optimized: false,
       settings: { maxScenes: MAX_SCENES, resolution: '720p', fps: 24 }
     }
 
@@ -384,11 +514,11 @@ serve(async (req) => {
       avatar: { ...existingAvatar, lovableAnimation: lovableAnimationData }
     }).eq('id', projectId)
 
-    await supabase.from('projects').update({ video_progress: 93 }).eq('id', projectId)
+    await supabase.from('projects').update({ video_progress: 96 }).eq('id', projectId)
 
     // Create video version record
-    const mainImageUrl = successfulScenes[0]?.imageUrl || null
-    if (mainImageUrl) {
+    const mainVideoUrl = scenesWithVideo[0]?.videoUrl || scenesWithImages[0]?.imageUrl || null
+    if (mainVideoUrl) {
       const { data: existingVersions } = await supabase
         .from('video_versions')
         .select('version_number')
@@ -400,34 +530,35 @@ serve(async (req) => {
 
       await supabase.from('video_versions').insert({
         project_id: projectId,
-        video_url: mainImageUrl,
+        video_url: mainVideoUrl,
         version_number: nextVersion,
         status: 'completed',
         duration_seconds: totalDuration,
         metadata: {
           type: 'lovable_animation',
-          scenes_count: successfulScenes.length,
-          has_narration: successfulScenes.some(s => s.audioUrl),
+          scenes_count: scenesWithImages.length,
+          video_clips: scenesWithVideo.length,
+          has_narration: scenesWithImages.some(s => s.audioUrl),
           generation_time_seconds: generationTimeSec
         }
       })
     }
 
-    // Final status
     await supabase.from('projects').update({
       video_status: 'lovable_completed',
       video_progress: 100,
       video_generated_at: new Date().toISOString(),
     }).eq('id', projectId)
 
-    console.log(`=== COMPLETED in ${generationTimeSec}s. Scenes: ${successfulScenes.length}, Audio: ${successfulScenes.filter(s => s.audioUrl).length} ===`)
+    console.log(`=== COMPLETED in ${generationTimeSec}s. Video clips: ${scenesWithVideo.length}, Audio: ${scenesWithImages.filter(s => s.audioUrl).length} ===`)
 
     return new Response(
       JSON.stringify({
         success: true,
-        totalScenes: successfulScenes.length,
+        totalScenes: scenesWithImages.length,
+        videoClips: scenesWithVideo.length,
         totalDuration,
-        hasNarration: successfulScenes.some(s => s.audioUrl),
+        hasNarration: scenesWithImages.some(s => s.audioUrl),
         generationTimeSeconds: generationTimeSec,
         lovableAnimation: lovableAnimationData
       }),
