@@ -146,10 +146,58 @@ async function uploadImageToStorage(
   }
 }
 
+// Build a fully expanded cinematic prompt from scene data
+function buildRunwayPrompt(scene: any, characters: any[]): string {
+  const parts: string[] = []
+
+  // Setting & environment
+  if (scene.setting) {
+    parts.push(`Setting: ${scene.setting}.`)
+  }
+
+  // Character descriptions relevant to this scene
+  const sceneCharacterNames = scene.dialogue?.map((d: any) => d.character) || []
+  const relevantChars = characters
+    .filter((c: any) => sceneCharacterNames.includes(c.name))
+    .map((c: any) => `${c.name} (${c.description})`)
+  if (relevantChars.length > 0) {
+    parts.push(`Characters present: ${relevantChars.join('; ')}.`)
+  }
+
+  // Continuous action description
+  if (scene.action) {
+    parts.push(`Continuous action in a single shot: ${scene.action}.`)
+  } else if (scene.description) {
+    parts.push(`Continuous action in a single shot: ${scene.description}.`)
+  }
+
+  // Dialogue as emotion cues (not text overlay)
+  if (scene.dialogue?.length > 0) {
+    const emotionCues = scene.dialogue
+      .map((d: any) => `${d.character} expresses ${d.emotion || 'neutral'} emotion while speaking`)
+      .join(', ')
+    parts.push(`Emotional performance: ${emotionCues}.`)
+  }
+
+  // Camera motion from scene data or default
+  const cameraAngle = scene.camera_angle || ''
+  if (cameraAngle) {
+    parts.push(`Camera motion: ${cameraAngle}, smooth steadicam movement with gentle drift.`)
+  } else {
+    parts.push(`Camera motion: slow cinematic pan with subtle tracking movement.`)
+  }
+
+  // Style directives
+  parts.push('Cinematic 3D animation style, soft volumetric lighting, natural character movement with blinking and gestures, environmental motion like wind and light particles, depth of field, film grain.')
+
+  return parts.join(' ')
+}
+
 // Start a Runway image-to-video task, returns task ID
 async function startRunwayVideoTask(
   imageUrl: string,
   scene: any,
+  characters: any[],
   runwayApiKey: string
 ): Promise<string | null> {
   // Runway requires a publicly accessible URL, not a data URI
@@ -158,10 +206,10 @@ async function startRunwayVideoTask(
     return null
   }
 
-  const promptText = `Animate this scene with natural character movement, gentle gestures, blinking, subtle body motion, cinematic camera pan. ${scene.action || scene.description}. Smooth cinematic motion, soft lighting.`
+  const promptText = buildRunwayPrompt(scene, characters)
 
   const requestBody = {
-    model: 'gen4_turbo',
+    model: 'gen3a_turbo',
     promptImage: imageUrl,
     promptText,
     duration: 5,
@@ -169,7 +217,8 @@ async function startRunwayVideoTask(
   }
 
   try {
-    console.log(`Runway request for scene ${scene.scene_number}:`, JSON.stringify({ model: requestBody.model, duration: requestBody.duration, imageUrl: imageUrl.substring(0, 100) }))
+    console.log(`Runway request for scene ${scene.scene_number}: model=${requestBody.model}, duration=${requestBody.duration}, imageUrl=${imageUrl.substring(0, 100)}`)
+    console.log(`Runway prompt for scene ${scene.scene_number}: ${promptText.substring(0, 300)}`)
     
     const response = await fetch(`${RUNWAY_API}/image_to_video`, {
       method: 'POST',
@@ -184,7 +233,7 @@ async function startRunwayVideoTask(
     const responseText = await response.text()
     
     if (!response.ok) {
-      console.error(`Runway task start failed for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
+      console.error(`Runway task start FAILED for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
       return null
     }
 
@@ -223,28 +272,31 @@ async function pollRunwayTask(
       })
 
       if (!response.ok) {
-        console.error(`Runway poll error: ${response.status}`)
+        const errBody = await response.text()
+        console.error(`Runway poll error for ${taskId}: HTTP ${response.status} — ${errBody}`)
         await new Promise(r => setTimeout(r, pollInterval))
         continue
       }
 
       const data = await response.json()
-      console.log(`Runway task ${taskId} status: ${data.status}`)
+      const elapsed = Math.round((Date.now() - start) / 1000)
+      console.log(`Runway task ${taskId} status: ${data.status} (${elapsed}s elapsed)`)
 
       if (data.status === 'SUCCEEDED') {
-        // output is array of video URLs
+        // output can be array of URLs or a single URL string
         const videoUrl = Array.isArray(data.output) ? data.output[0] : data.output
+        console.log(`Runway task ${taskId} SUCCEEDED — video URL: ${videoUrl?.substring(0, 120)}`)
         return videoUrl || null
       }
 
       if (data.status === 'FAILED') {
-        console.error(`Runway task ${taskId} failed:`, data.failure || data.failureCode)
+        console.error(`Runway task ${taskId} FAILED:`, JSON.stringify({ failure: data.failure, failureCode: data.failureCode }))
         return null
       }
 
       // PENDING, THROTTLED, RUNNING — keep polling
     } catch (err) {
-      console.error(`Runway poll exception:`, err)
+      console.error(`Runway poll exception for ${taskId}:`, err)
     }
 
     await new Promise(r => setTimeout(r, pollInterval))
@@ -253,8 +305,6 @@ async function pollRunwayTask(
   console.error(`Runway task ${taskId} timed out after ${maxPollSeconds}s`)
   return null
 }
-
-// Download a video from URL and upload to Supabase storage
 async function uploadVideoToStorage(
   videoUrl: string,
   supabase: any,
@@ -450,7 +500,8 @@ serve(async (req) => {
 
     for (const scene of scenesWithImages) {
       if (!scene.imageUrl) continue
-      const taskId = await startRunwayVideoTask(scene.imageUrl, scenes.find((s: any) => s.scene_number === scene.sceneNumber) || {}, RUNWAY_API_KEY)
+      const fullScene = scenes.find((s: any) => s.scene_number === scene.sceneNumber) || {}
+      const taskId = await startRunwayVideoTask(scene.imageUrl, fullScene, characters, RUNWAY_API_KEY)
       taskMap.push({ sceneNumber: scene.sceneNumber, taskId, imageUrl: scene.imageUrl! })
 
       // Small delay between task starts to avoid rate limits
