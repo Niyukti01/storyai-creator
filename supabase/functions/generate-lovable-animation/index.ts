@@ -235,6 +235,54 @@ function buildRunwayPrompt(scene: any, characters: any[]): string {
   return parts.join(' ')
 }
 
+// Validate that a prompt contains required cinematic and camera motion elements
+function validateRunwayPrompt(prompt: string, sceneNumber: number): string {
+  const lower = prompt.toLowerCase()
+  const issues: string[] = []
+
+  // Check for camera motion keywords
+  const cameraKeywords = ['camera', 'dolly', 'pan', 'tracking', 'steadicam', 'crane', 'push-in', 'zoom', 'handheld', 'drift', 'arc']
+  const hasCameraMotion = cameraKeywords.some(kw => lower.includes(kw))
+  if (!hasCameraMotion) {
+    issues.push('missing camera motion')
+  }
+
+  // Check for cinematic style keywords
+  const cinematicKeywords = ['cinematic', 'film', 'volumetric', 'depth of field', 'lighting', 'color grading']
+  const hasCinematic = cinematicKeywords.some(kw => lower.includes(kw))
+  if (!hasCinematic) {
+    issues.push('missing cinematic style')
+  }
+
+  // Check for character action/motion keywords
+  const motionKeywords = ['movement', 'motion', 'animate', 'gesture', 'blinking', 'breathing', 'walking', 'moving', 'action']
+  const hasMotion = motionKeywords.some(kw => lower.includes(kw))
+  if (!hasMotion) {
+    issues.push('missing character motion')
+  }
+
+  // Check for environment/atmosphere
+  const envKeywords = ['environment', 'ambient', 'wind', 'light', 'atmosphere', 'dust', 'particles']
+  const hasEnv = envKeywords.some(kw => lower.includes(kw))
+  if (!hasEnv) {
+    issues.push('missing environmental motion')
+  }
+
+  // If any elements are missing, append defaults
+  if (issues.length > 0) {
+    console.warn(`Scene ${sceneNumber} prompt validation: ${issues.join(', ')} — injecting defaults`)
+    const fixes: string[] = []
+    if (!hasCameraMotion) fixes.push('Camera: slow cinematic dolly with gentle arc around subjects, smooth steadicam tracking.')
+    if (!hasCinematic) fixes.push('Style: cinematic 3D animation, volumetric lighting, warm color grading, depth of field, film grain.')
+    if (!hasMotion) fixes.push('Character motion: natural movement with breathing, blinking, subtle gestures, weight and momentum.')
+    if (!hasEnv) fixes.push('Environment: ambient motion with gentle wind, dust particles in light, atmospheric haze.')
+    return prompt + ' ' + fixes.join(' ')
+  }
+
+  console.log(`Scene ${sceneNumber} prompt validated: all cinematic elements present ✓`)
+  return prompt
+}
+
 // Start a Runway image-to-video task, returns task ID
 async function startRunwayVideoTask(
   imageUrl: string,
@@ -248,7 +296,8 @@ async function startRunwayVideoTask(
     return null
   }
 
-  const promptText = buildRunwayPrompt(scene, characters)
+  const rawPrompt = buildRunwayPrompt(scene, characters)
+  const promptText = validateRunwayPrompt(rawPrompt, scene.scene_number || 0)
 
   const requestBody = {
     model: 'gen3a_turbo',
