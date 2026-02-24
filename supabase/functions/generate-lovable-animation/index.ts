@@ -150,45 +150,87 @@ async function uploadImageToStorage(
 function buildRunwayPrompt(scene: any, characters: any[]): string {
   const parts: string[] = []
 
-  // Setting & environment
+  // Setting & environment with atmosphere
   if (scene.setting) {
-    parts.push(`Setting: ${scene.setting}.`)
+    parts.push(`A continuous single-take shot set in ${scene.setting}.`)
   }
 
-  // Character descriptions relevant to this scene
-  const sceneCharacterNames = scene.dialogue?.map((d: any) => d.character) || []
-  const relevantChars = characters
-    .filter((c: any) => sceneCharacterNames.includes(c.name))
-    .map((c: any) => `${c.name} (${c.description})`)
+  // Full character descriptions with clothing and personality
+  const sceneCharacterNames = [
+    ...(scene.dialogue?.map((d: any) => d.character) || []),
+  ]
+  const uniqueNames = [...new Set(sceneCharacterNames)]
+  const relevantChars = characters.filter((c: any) => uniqueNames.includes(c.name))
+  
   if (relevantChars.length > 0) {
-    parts.push(`Characters present: ${relevantChars.join('; ')}.`)
+    const charDescriptions = relevantChars.map((c: any) => {
+      const personality = c.personality ? `, personality: ${c.personality}` : ''
+      return `${c.name} — ${c.description}${personality}`
+    }).join('. ')
+    parts.push(`Characters in frame: ${charDescriptions}.`)
   }
 
-  // Continuous action description
+  // Scene description for visual context
+  if (scene.description) {
+    parts.push(`Visual context: ${scene.description}.`)
+  }
+
+  // Continuous physical action — the core of what Runway animates
   if (scene.action) {
-    parts.push(`Continuous action in a single shot: ${scene.action}.`)
-  } else if (scene.description) {
-    parts.push(`Continuous action in a single shot: ${scene.description}.`)
+    parts.push(`Physical action (animate this): ${scene.action}. Characters move naturally with weight and momentum, subtle breathing, blinking, hair and cloth physics responding to movement.`)
   }
 
-  // Dialogue as emotion cues (not text overlay)
+  // Dialogue-driven emotional performance
   if (scene.dialogue?.length > 0) {
-    const emotionCues = scene.dialogue
-      .map((d: any) => `${d.character} expresses ${d.emotion || 'neutral'} emotion while speaking`)
-      .join(', ')
-    parts.push(`Emotional performance: ${emotionCues}.`)
+    const performances = scene.dialogue.map((d: any) => {
+      const emotion = d.emotion || 'neutral'
+      const lineHint = d.line ? d.line.replace(/[()]/g, '').substring(0, 60) : ''
+      return `${d.character} performs with ${emotion} emotion${lineHint ? `, gesturing as if saying "${lineHint}"` : ''}`
+    }).join('. ')
+    parts.push(`Character performances: ${performances}. Lip movement suggesting speech, expressive eyes and eyebrows, hand gestures matching emotional tone.`)
   }
 
-  // Camera motion from scene data or default
+  // Camera motion — fully expanded from scene data
   const cameraAngle = scene.camera_angle || ''
   if (cameraAngle) {
-    parts.push(`Camera motion: ${cameraAngle}, smooth steadicam movement with gentle drift.`)
+    // Parse common camera terms and expand them
+    const cameraLower = cameraAngle.toLowerCase()
+    const motionDetails: string[] = [`Camera: ${cameraAngle}`]
+    
+    if (cameraLower.includes('close-up') || cameraLower.includes('closeup')) {
+      motionDetails.push('with shallow depth of field, slight handheld drift, rack focus between subjects')
+    }
+    if (cameraLower.includes('wide shot') || cameraLower.includes('wide angle')) {
+      motionDetails.push('with slow dolly movement revealing the full environment, deep focus')
+    }
+    if (cameraLower.includes('tracking') || cameraLower.includes('follow')) {
+      motionDetails.push('with smooth steadicam tracking the subject, parallax on background elements')
+    }
+    if (cameraLower.includes('pan') || cameraLower.includes('sweeping')) {
+      motionDetails.push('with fluid horizontal pan, motivated by character movement')
+    }
+    if (cameraLower.includes('two-shot') || cameraLower.includes('2-shot')) {
+      motionDetails.push('framing both characters, subtle push-in building tension')
+    }
+    if (cameraLower.includes('long shot')) {
+      motionDetails.push('with slow crane movement, environmental parallax, atmospheric perspective')
+    }
+    if (cameraLower.includes('montage')) {
+      motionDetails.push('with dynamic movement suggesting energy and passage of time')
+    }
+    
+    // Always add smooth motion quality
+    motionDetails.push('Smooth cinematic motion, no jarring cuts within the shot.')
+    parts.push(motionDetails.join(', ') + '.')
   } else {
-    parts.push(`Camera motion: slow cinematic pan with subtle tracking movement.`)
+    parts.push('Camera: slow cinematic dolly with gentle arc movement around subjects, shallow depth of field, smooth steadicam quality, motivated camera drift following the action.')
   }
 
-  // Style directives
-  parts.push('Cinematic 3D animation style, soft volumetric lighting, natural character movement with blinking and gestures, environmental motion like wind and light particles, depth of field, film grain.')
+  // Environmental motion
+  parts.push('Environment: subtle ambient motion — dust motes in light beams, gentle wind on hair and fabric, flickering light sources, atmospheric haze, background characters or elements with secondary motion.')
+
+  // Style and rendering
+  parts.push('Style: cinematic 3D animation, Pixar-quality rendering, volumetric god rays, warm color grading, anamorphic lens characteristics, film grain, 24fps motion cadence.')
 
   return parts.join(' ')
 }
