@@ -152,9 +152,25 @@ async function startRunwayVideoTask(
   scene: any,
   runwayApiKey: string
 ): Promise<string | null> {
+  // Runway requires a publicly accessible URL, not a data URI
+  if (imageUrl.startsWith('data:')) {
+    console.error(`Scene ${scene.scene_number}: Cannot use data URI for Runway — need public URL`)
+    return null
+  }
+
   const promptText = `Animate this scene with natural character movement, gentle gestures, blinking, subtle body motion, cinematic camera pan. ${scene.action || scene.description}. Smooth cinematic motion, soft lighting.`
 
+  const requestBody = {
+    model: 'gen4_turbo',
+    promptImage: imageUrl,
+    promptText,
+    duration: 5,
+    ratio: '1280:720',
+  }
+
   try {
+    console.log(`Runway request for scene ${scene.scene_number}:`, JSON.stringify({ model: requestBody.model, duration: requestBody.duration, imageUrl: imageUrl.substring(0, 100) }))
+    
     const response = await fetch(`${RUNWAY_API}/image_to_video`, {
       method: 'POST',
       headers: {
@@ -162,23 +178,25 @@ async function startRunwayVideoTask(
         'Content-Type': 'application/json',
         'X-Runway-Version': RUNWAY_VERSION,
       },
-      body: JSON.stringify({
-        model: 'gen4_turbo',
-        promptImage: imageUrl,
-        promptText,
-        duration: 5,
-        ratio: '1280:720',
-      }),
+      body: JSON.stringify(requestBody),
     })
 
+    const responseText = await response.text()
+    
     if (!response.ok) {
-      const errText = await response.text()
-      console.error(`Runway task start failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
+      console.error(`Runway task start failed for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
       return null
     }
 
-    const data = await response.json()
-    console.log(`Runway task started for scene ${scene.scene_number}: ${data.id}`)
+    let data
+    try {
+      data = JSON.parse(responseText)
+    } catch {
+      console.error(`Runway response not JSON for scene ${scene.scene_number}: ${responseText}`)
+      return null
+    }
+
+    console.log(`Runway task started for scene ${scene.scene_number}: ID=${data.id}, status=${data.status}`)
     return data.id || null
   } catch (err) {
     console.error(`Runway task exception for scene ${scene.scene_number}:`, err)
@@ -384,10 +402,23 @@ serve(async (req) => {
       const scene = scenes[i]
       const { base64, url } = await generateSceneImage(scene, characters, project.genre, LOVABLE_API_KEY)
 
-      let storedUrl = url
+      let storedUrl: string | null = null
+      
+      // Always upload to storage so we get a public URL (Runway needs public URLs, not data URIs)
       if (base64) {
-        const uploaded = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
-        if (uploaded) storedUrl = uploaded
+        storedUrl = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
+      } else if (url && url.startsWith('data:')) {
+        // Extract base64 from data URL and upload
+        const b64 = url.split(',')[1]
+        if (b64) {
+          storedUrl = await uploadImageToStorage(b64, supabase, projectId, scene.scene_number)
+        }
+      } else if (url) {
+        storedUrl = url
+      }
+      
+      if (!storedUrl) {
+        console.error(`Scene ${scene.scene_number}: No usable image URL generated`)
       }
 
       const dialogueText = scene.dialogue?.map((d: any) => `${d.character}: "${d.line}"`).join(' ') || ''
@@ -395,7 +426,7 @@ serve(async (req) => {
 
       sceneDataList.push({
         sceneNumber: scene.scene_number,
-        imageUrl: storedUrl || url,
+        imageUrl: storedUrl || null,
         videoUrl: null,
         narration,
         audioUrl: null,
