@@ -146,6 +146,82 @@ async function uploadImageToStorage(
   }
 }
 
+// Motion presets: curated camera + character action combos for different scene types
+const MOTION_PRESETS: Record<string, { camera: string; action: string; env: string }> = {
+  'close_up_rack_focus': {
+    camera: 'Tight close-up with shallow depth of field, slight handheld drift, rack focus pulling between character faces to reveal emotional reactions.',
+    action: 'Subtle micro-expressions: eyebrow raises, lip quivers, eye darts, gentle head tilts. Breathing visible in chest rise.',
+    env: 'Background softly blurred with bokeh, gentle light flicker on faces, dust motes floating in shallow focus.'
+  },
+  'tracking_steadicam': {
+    camera: 'Smooth steadicam tracking shot following characters as they move, parallax on foreground and background layers, gentle vertical float.',
+    action: 'Characters walking with natural gait, arms swinging, hair bouncing, clothing swaying with each step, occasional glances at each other.',
+    env: 'Environment slides past with depth parallax, background elements drift, ambient particles trail through frame.'
+  },
+  'dolly_reveal': {
+    camera: 'Slow forward dolly push revealing the full scene, starting tight and widening to establish the environment, smooth crane-up at the end.',
+    action: 'Characters gradually enter frame or are revealed by camera movement, settling into their positions with natural weight shifts.',
+    env: 'Full environment revealed with layered depth — foreground objects pass by, midground characters appear, background landscape opens up.'
+  },
+  'two_shot_push_in': {
+    camera: 'Medium two-shot framing both characters, slow push-in building dramatic tension, slight arc to show spatial relationship.',
+    action: 'Characters face each other with animated conversation gestures, leaning in/out, hand movements emphasizing dialogue, shifting weight between feet.',
+    env: 'Background slightly defocused, ambient light shifts suggesting time passage, secondary motion in set dressing.'
+  },
+  'wide_establishing': {
+    camera: 'Wide establishing shot with slow horizontal pan, deep focus capturing the full environment, gentle crane movement adding grandeur.',
+    action: 'Characters as part of the larger scene, small but purposeful movements — walking into frame, gesturing broadly, interacting with environment.',
+    env: 'Rich environmental animation: clouds moving, water rippling, flags waving, crowd murmur, atmospheric haze with volumetric light shafts.'
+  },
+  'montage_dynamic': {
+    camera: 'Dynamic camera with motivated movement — push-ins on key moments, whip pans between action beats, energy-driven dolly rushes.',
+    action: 'Rapid purposeful character actions: working, building, creating, trading. Quick decisive movements showing progress and determination.',
+    env: 'Environment shifts suggesting time passage — light changes from morning to evening, seasons shifting, space transforming around characters.'
+  },
+  'orbit_dramatic': {
+    camera: 'Slow 180-degree orbit around the subject, dramatic lighting shift as camera moves, revealing new angles and context.',
+    action: 'Character holds a powerful pose or moment of decision, subtle wind effect on hair and clothing, intense eye contact with implied viewer.',
+    env: 'Dramatic lighting with rim light sweeping across scene as camera orbits, volumetric god rays, atmospheric tension.'
+  },
+  'over_shoulder_intimate': {
+    camera: 'Over-the-shoulder shot with soft foreground bokeh from the listener, gentle sway mimicking natural body rhythm, slow focus pull.',
+    action: 'Speaking character with expressive lip movement and hand gestures, listening character with reactive nods and micro-expressions.',
+    env: 'Warm intimate lighting, candle flicker or firelight, cozy atmosphere with soft ambient sounds suggested by visual warmth.'
+  }
+}
+
+// Select the best motion preset based on scene content
+function selectMotionPreset(scene: any): string {
+  const cameraAngle = (scene.camera_angle || '').toLowerCase()
+  const action = (scene.action || '').toLowerCase()
+  const description = (scene.description || '').toLowerCase()
+  const dialogueCount = scene.dialogue?.length || 0
+  const combined = `${cameraAngle} ${action} ${description}`
+
+  // Direct camera_angle matches
+  if (cameraAngle.includes('close-up') || cameraAngle.includes('closeup')) return 'close_up_rack_focus'
+  if (cameraAngle.includes('tracking') || cameraAngle.includes('follow')) return 'tracking_steadicam'
+  if (cameraAngle.includes('two-shot') || cameraAngle.includes('2-shot')) return 'two_shot_push_in'
+  if (cameraAngle.includes('wide') || cameraAngle.includes('establishing')) return 'wide_establishing'
+  if (cameraAngle.includes('montage')) return 'montage_dynamic'
+  if (cameraAngle.includes('orbit') || cameraAngle.includes('revolve')) return 'orbit_dramatic'
+  if (cameraAngle.includes('over') && cameraAngle.includes('shoulder')) return 'over_shoulder_intimate'
+  if (cameraAngle.includes('long shot')) return 'dolly_reveal'
+
+  // Infer from scene content
+  if (combined.includes('walk') || combined.includes('run') || combined.includes('journey') || combined.includes('path')) return 'tracking_steadicam'
+  if (combined.includes('montage') || combined.includes('time-lapse') || combined.includes('timelapse')) return 'montage_dynamic'
+  if (combined.includes('reveal') || combined.includes('discover') || combined.includes('mansion') || combined.includes('palace')) return 'dolly_reveal'
+  if (combined.includes('whisper') || combined.includes('intimate') || combined.includes('embrace')) return 'over_shoulder_intimate'
+  if (combined.includes('confront') || combined.includes('argue') || combined.includes('table')) return 'two_shot_push_in'
+  if (dialogueCount >= 3) return 'two_shot_push_in'
+  if (dialogueCount === 0 && combined.includes('square') || combined.includes('town') || combined.includes('market')) return 'wide_establishing'
+  if (combined.includes('eye') || combined.includes('tear') || combined.includes('emotion')) return 'close_up_rack_focus'
+
+  // Default based on dialogue presence
+  return dialogueCount > 0 ? 'two_shot_push_in' : 'dolly_reveal'
+}
+
 // Build a fully expanded cinematic prompt from scene data
 function buildRunwayPrompt(scene: any, characters: any[]): string {
   const parts: string[] = []
@@ -190,44 +266,14 @@ function buildRunwayPrompt(scene: any, characters: any[]): string {
     parts.push(`Character performances: ${performances}. Lip movement suggesting speech, expressive eyes and eyebrows, hand gestures matching emotional tone.`)
   }
 
-  // Camera motion — fully expanded from scene data
-  const cameraAngle = scene.camera_angle || ''
-  if (cameraAngle) {
-    // Parse common camera terms and expand them
-    const cameraLower = cameraAngle.toLowerCase()
-    const motionDetails: string[] = [`Camera: ${cameraAngle}`]
-    
-    if (cameraLower.includes('close-up') || cameraLower.includes('closeup')) {
-      motionDetails.push('with shallow depth of field, slight handheld drift, rack focus between subjects')
-    }
-    if (cameraLower.includes('wide shot') || cameraLower.includes('wide angle')) {
-      motionDetails.push('with slow dolly movement revealing the full environment, deep focus')
-    }
-    if (cameraLower.includes('tracking') || cameraLower.includes('follow')) {
-      motionDetails.push('with smooth steadicam tracking the subject, parallax on background elements')
-    }
-    if (cameraLower.includes('pan') || cameraLower.includes('sweeping')) {
-      motionDetails.push('with fluid horizontal pan, motivated by character movement')
-    }
-    if (cameraLower.includes('two-shot') || cameraLower.includes('2-shot')) {
-      motionDetails.push('framing both characters, subtle push-in building tension')
-    }
-    if (cameraLower.includes('long shot')) {
-      motionDetails.push('with slow crane movement, environmental parallax, atmospheric perspective')
-    }
-    if (cameraLower.includes('montage')) {
-      motionDetails.push('with dynamic movement suggesting energy and passage of time')
-    }
-    
-    // Always add smooth motion quality
-    motionDetails.push('Smooth cinematic motion, no jarring cuts within the shot.')
-    parts.push(motionDetails.join(', ') + '.')
-  } else {
-    parts.push('Camera: slow cinematic dolly with gentle arc movement around subjects, shallow depth of field, smooth steadicam quality, motivated camera drift following the action.')
-  }
-
-  // Environmental motion
-  parts.push('Environment: subtle ambient motion — dust motes in light beams, gentle wind on hair and fabric, flickering light sources, atmospheric haze, background characters or elements with secondary motion.')
+  // Motion preset — auto-selected based on scene content
+  const presetKey = selectMotionPreset(scene)
+  const preset = MOTION_PRESETS[presetKey]
+  console.log(`Scene ${scene.scene_number}: motion preset = ${presetKey}`)
+  
+  parts.push(`Camera: ${preset.camera}`)
+  parts.push(`Character animation: ${preset.action}`)
+  parts.push(`Environment: ${preset.env}`)
 
   // Style and rendering
   parts.push('Style: cinematic 3D animation, Pixar-quality rendering, volumetric god rays, warm color grading, anamorphic lens characteristics, film grain, 24fps motion cadence.')
