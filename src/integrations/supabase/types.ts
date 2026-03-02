@@ -147,6 +147,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "video_annotations_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "shared_projects"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "video_annotations_video_version_id_fkey"
             columns: ["video_version_id"]
             isOneToOne: false
@@ -195,6 +202,13 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_chapters_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "shared_projects"
             referencedColumns: ["id"]
           },
           {
@@ -251,11 +265,56 @@ export type Database = {
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "video_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "shared_projects"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
     Views: {
-      [_ in never]: never
+      shared_projects: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          genre: string | null
+          id: string | null
+          script: Json | null
+          share_enabled: boolean | null
+          share_token: string | null
+          title: string | null
+          updated_at: string | null
+          video_url: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          genre?: string | null
+          id?: string | null
+          script?: Json | null
+          share_enabled?: boolean | null
+          share_token?: string | null
+          title?: string | null
+          updated_at?: string | null
+          video_url?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          genre?: string | null
+          id?: string | null
+          script?: Json | null
+          share_enabled?: boolean | null
+          share_token?: string | null
+          title?: string | null
+          updated_at?: string | null
+          video_url?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       [_ in never]: never
