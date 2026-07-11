@@ -222,9 +222,31 @@ function selectMotionPreset(scene: any): string {
   return dialogueCount > 0 ? 'two_shot_push_in' : 'dolly_reveal'
 }
 
+// Build a locked-appearance "character bible" that is repeated for every scene
+// so face, hair, clothing, body proportions, skin tone and accessories stay
+// identical across the whole story.
+function buildCharacterBible(characters: any[]): string {
+  if (!characters || characters.length === 0) return ''
+  const entries = characters.map((c: any) => {
+    const bits: string[] = [`${c.name}`]
+    if (c.description) bits.push(c.description)
+    if (c.appearance) bits.push(`appearance: ${c.appearance}`)
+    if (c.hair) bits.push(`hair: ${c.hair}`)
+    if (c.clothing || c.outfit) bits.push(`clothing: ${c.clothing || c.outfit}`)
+    if (c.skinTone || c.skin_tone) bits.push(`skin tone: ${c.skinTone || c.skin_tone}`)
+    if (c.accessories) bits.push(`accessories: ${c.accessories}`)
+    return bits.join(', ')
+  }).join(' | ')
+  return `CHARACTER CONSISTENCY LOCK (do not change between scenes): ${entries}. Keep every character's face, hairstyle, clothing, body proportions, skin tone and accessories IDENTICAL to this description in every frame.`
+}
+
 // Build a fully expanded cinematic prompt from scene data
 function buildRunwayPrompt(scene: any, characters: any[]): string {
   const parts: string[] = []
+
+  // Character bible FIRST so consistency is the strongest signal
+  const bible = buildCharacterBible(characters)
+  if (bible) parts.push(bible)
 
   // Setting & environment with atmosphere
   if (scene.setting) {
@@ -243,7 +265,7 @@ function buildRunwayPrompt(scene: any, characters: any[]): string {
       const personality = c.personality ? `, personality: ${c.personality}` : ''
       return `${c.name} — ${c.description}${personality}`
     }).join('. ')
-    parts.push(`Characters in frame: ${charDescriptions}.`)
+    parts.push(`Characters in frame (same identical appearance as the consistency lock above): ${charDescriptions}.`)
   }
 
   // Scene description for visual context
@@ -253,7 +275,7 @@ function buildRunwayPrompt(scene: any, characters: any[]): string {
 
   // Continuous physical action — the core of what Runway animates
   if (scene.action) {
-    parts.push(`Physical action (animate this): ${scene.action}. Characters move naturally with weight and momentum, subtle breathing, blinking, hair and cloth physics responding to movement.`)
+    parts.push(`Physical action (animate this): ${scene.action}. Characters move naturally with weight and momentum, subtle breathing, blinking, hair and cloth physics responding to movement, natural eye contact and expressive facial performance.`)
   }
 
   // Dialogue-driven emotional performance
@@ -279,6 +301,43 @@ function buildRunwayPrompt(scene: any, characters: any[]): string {
   parts.push('Style: cinematic 3D animation, Pixar-quality rendering, volumetric god rays, warm color grading, anamorphic lens characteristics, film grain, 24fps motion cadence.')
 
   return parts.join(' ')
+}
+
+// Write a fine-grained progress detail into projects.avatar.lovableGenerationStatus
+// so the client can show "Generating Scene X of N" and an ETA.
+async function updateGenerationStatus(
+  supabase: any,
+  projectId: string,
+  existingAvatar: any,
+  status: {
+    phase: string
+    currentScene?: number
+    totalScenes?: number
+    startedAt: number
+    progress: number
+  }
+) {
+  const elapsedSec = Math.round((Date.now() - status.startedAt) / 1000)
+  const etaSec = status.progress > 5
+    ? Math.max(0, Math.round((elapsedSec / status.progress) * (100 - status.progress)))
+    : null
+  const detail = {
+    phase: status.phase,
+    currentScene: status.currentScene ?? null,
+    totalScenes: status.totalScenes ?? null,
+    progress: status.progress,
+    elapsedSeconds: elapsedSec,
+    etaSeconds: etaSec,
+    updatedAt: new Date().toISOString(),
+  }
+  try {
+    await supabase.from('projects').update({
+      avatar: { ...(existingAvatar || {}), lovableGenerationStatus: detail },
+      video_progress: status.progress,
+    }).eq('id', projectId)
+  } catch (e) {
+    console.error('updateGenerationStatus failed:', e)
+  }
 }
 
 // Validate that a prompt contains required cinematic and camera motion elements
