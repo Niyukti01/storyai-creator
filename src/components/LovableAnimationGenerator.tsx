@@ -402,12 +402,33 @@ export const LovableAnimationGenerator = ({
             <Progress value={progress} className="h-4" />
           </div>
 
+          {/* Live per-scene status from backend */}
+          {genStatus?.currentScene && genStatus?.totalScenes && (
+            <div className="bg-gradient-to-r from-pink-50 to-purple-50 dark:from-pink-950/40 dark:to-purple-950/40 rounded-lg p-4 flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p className="text-sm font-semibold text-pink-700 dark:text-pink-300">
+                  Generating Scene {genStatus.currentScene} of {genStatus.totalScenes}
+                </p>
+                {genStatus.phase && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{genStatus.phase}</p>
+                )}
+              </div>
+              {typeof genStatus.etaSeconds === "number" && genStatus.etaSeconds > 0 && (
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <Clock className="w-4 h-4" />
+                  <span>~{Math.floor(genStatus.etaSeconds / 60)}m {genStatus.etaSeconds % 60}s left</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="text-center space-y-3">
             <div className="text-4xl">{phaseInfo.icon}</div>
             <p className="text-muted-foreground text-sm">
               AI video generation takes 3–5 minutes. Please keep this tab open.
             </p>
           </div>
+
 
           <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
             <p className="font-medium mb-2">Pipeline stages:</p>
