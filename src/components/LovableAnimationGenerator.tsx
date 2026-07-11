@@ -207,14 +207,11 @@ export const LovableAnimationGenerator = ({
   };
 
   const handleDownload = async () => {
-    // Download the first video clip as a sample, or build combined download
     const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
     if (videoScenes.length === 0) {
       toast.error("No video clips available for download");
       return;
     }
-
-    // Download the first video clip
     try {
       const response = await fetch(videoScenes[0].videoUrl!);
       const blob = await response.blob();
@@ -227,6 +224,44 @@ export const LovableAnimationGenerator = ({
       toast.success("Video clip downloaded!");
     } catch (err) {
       toast.error("Failed to download video");
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
+    if (videoScenes.length === 0) {
+      toast.error("No video clips available for download");
+      return;
+    }
+    setDownloadingAll(true);
+    try {
+      for (let i = 0; i < videoScenes.length; i++) {
+        const s = videoScenes[i];
+        toast.info(`Downloading clip ${i + 1} of ${videoScenes.length}...`);
+        const response = await fetch(s.videoUrl!);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `story-scene-${s.sceneNumber}.mp4`;
+        a.click();
+        URL.revokeObjectURL(url);
+        await new Promise(r => setTimeout(r, 400));
+      }
+      toast.success(`Downloaded ${videoScenes.length} MP4 clips!`);
+    } catch (err) {
+      toast.error("Failed to download all clips");
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!playerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      playerContainerRef.current.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
     }
   };
 
