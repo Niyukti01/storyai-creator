@@ -67,9 +67,14 @@ export const LovableAnimationGenerator = ({
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [genStatus, setGenStatus] = useState<{ phase?: string; currentScene?: number; totalScenes?: number; etaSeconds?: number | null } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const scenes = existingAnimation?.scenes || [];
