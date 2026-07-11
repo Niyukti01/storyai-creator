@@ -133,11 +133,19 @@ export const LovableAnimationGenerator = ({
     if (videoRef.current && currentHasVideo && currentScene?.videoUrl) {
       videoRef.current.src = currentScene.videoUrl;
       videoRef.current.volume = isMuted ? 0 : volume;
+      videoRef.current.playbackRate = playbackRate;
       if (isPlaying) {
         videoRef.current.play().catch(() => {});
       }
     }
-  }, [currentSceneIndex, currentScene?.videoUrl, currentHasVideo, isPlaying, volume, isMuted]);
+  }, [currentSceneIndex, currentScene?.videoUrl, currentHasVideo, isPlaying, volume, isMuted, playbackRate]);
+
+  // Track fullscreen state
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // When video ends, advance to next scene
   const handleVideoEnded = useCallback(() => {
