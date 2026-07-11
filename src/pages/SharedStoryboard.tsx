@@ -66,10 +66,9 @@ const SharedStoryboard = () => {
   const loadSharedProject = async () => {
     try {
       const { data, error: fetchError } = await supabase
-        .from("projects")
+        .from("shared_projects")
         .select("id, title, description, genre, script")
         .eq("share_token", token)
-        .eq("share_enabled", true)
         .maybeSingle();
 
       if (fetchError) throw fetchError;
