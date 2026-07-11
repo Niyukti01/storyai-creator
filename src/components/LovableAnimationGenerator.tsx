@@ -487,11 +487,13 @@ export const LovableAnimationGenerator = ({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Video / Image player */}
-          <div className="relative aspect-video rounded-xl overflow-hidden bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-950 dark:to-purple-950">
+          {/* Video / Image player (fullscreen target) */}
+          <div
+            ref={playerContainerRef}
+            className="relative aspect-video rounded-xl overflow-hidden bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-950 dark:to-purple-950"
+          >
             {currentScene && (
               <>
-                {/* Render video element if scene has a video clip */}
                 {currentHasVideo ? (
                   <video
                     ref={videoRef}
@@ -508,10 +510,8 @@ export const LovableAnimationGenerator = ({
                   />
                 )}
 
-                {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent pointer-events-none" />
 
-                {/* Scene label */}
                 <div className="absolute top-3 left-3">
                   <Badge className="bg-pink-500/80 text-white backdrop-blur-sm text-xs">
                     {currentHasVideo ? "🎥" : "🖼️"} Scene {currentScene.sceneNumber}
@@ -519,14 +519,16 @@ export const LovableAnimationGenerator = ({
                   </Badge>
                 </div>
 
-                {/* Timer badge */}
-                <div className="absolute top-3 right-3">
+                {/* Timer + remaining */}
+                <div className="absolute top-3 right-3 flex gap-2">
                   <Badge className="bg-black/60 text-white backdrop-blur-sm">
                     {formatDuration(getCurrentOverallTime())} / {formatDuration(getTotalDuration())}
                   </Badge>
+                  <Badge className="bg-black/60 text-white backdrop-blur-sm">
+                    -{formatDuration(Math.max(0, getTotalDuration() - getCurrentOverallTime()))}
+                  </Badge>
                 </div>
 
-                {/* Narration subtitle */}
                 <div className="absolute bottom-14 left-4 right-4 pointer-events-none">
                   <div className="bg-black/70 rounded-xl px-5 py-3 backdrop-blur-sm">
                     <p className="text-white text-center text-sm md:text-base leading-relaxed">
@@ -535,7 +537,6 @@ export const LovableAnimationGenerator = ({
                   </div>
                 </div>
 
-                {/* Play overlay */}
                 {!isPlaying && (
                   <div
                     className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer"
@@ -574,29 +575,47 @@ export const LovableAnimationGenerator = ({
             ))}
           </div>
 
-          {/* Controls */}
+          {/* Playback controls */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => { setCurrentSceneIndex(0); setCurrentTime(0); setIsPlaying(false); }}>
+              <Button variant="ghost" size="icon" title="Restart" onClick={() => { setCurrentSceneIndex(0); setCurrentTime(0); setIsPlaying(false); }}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={goToPrevScene} disabled={currentSceneIndex === 0}>
+              <Button variant="ghost" size="icon" title="Previous scene" onClick={goToPrevScene} disabled={currentSceneIndex === 0}>
                 <SkipBack className="h-4 w-4" />
               </Button>
               <Button
                 size="icon"
+                title={isPlaying ? "Pause" : "Play / Resume"}
                 onClick={togglePlay}
                 className="h-12 w-12 rounded-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
               >
                 {isPlaying ? <Pause className="h-5 w-5 text-white" /> : <Play className="h-5 w-5 text-white ml-0.5" />}
               </Button>
-              <Button variant="ghost" size="icon" onClick={goToNextScene} disabled={currentSceneIndex === scenes.length - 1}>
+              <Button variant="ghost" size="icon" title="Next scene" onClick={goToNextScene} disabled={currentSceneIndex === scenes.length - 1}>
                 <SkipForward className="h-4 w-4" />
+              </Button>
+
+              {/* Playback speed */}
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Playback speed"
+                onClick={() => {
+                  const rates = [0.5, 1, 1.25, 1.5, 2];
+                  const next = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+                  setPlaybackRate(next);
+                  if (videoRef.current) videoRef.current.playbackRate = next;
+                }}
+                className="gap-1 min-w-[3.5rem]"
+              >
+                <Gauge className="h-4 w-4" />
+                {playbackRate}x
               </Button>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)}>
+              <Button variant="ghost" size="icon" title={isMuted ? "Unmute" : "Mute"} onClick={() => setIsMuted(!isMuted)}>
                 {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
               </Button>
               <Slider
@@ -606,19 +625,33 @@ export const LovableAnimationGenerator = ({
                 onValueChange={(v) => { setVolume(v[0] / 100); setIsMuted(v[0] === 0); }}
                 className="w-20"
               />
-
-              {/* Download button */}
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleDownload}
-                disabled={videoClipCount === 0}
-                className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white"
-              >
-                <Download className="h-4 w-4 mr-1" />
-                Download MP4
+              <Button variant="ghost" size="icon" title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
+                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </Button>
             </div>
+          </div>
+
+          {/* Prominent download row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+            <Button
+              size="lg"
+              onClick={handleDownload}
+              disabled={videoClipCount === 0}
+              className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-lg"
+            >
+              <Download className="h-5 w-5 mr-2" />
+              Download Video (MP4)
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleDownloadAll}
+              disabled={videoClipCount === 0 || downloadingAll}
+              className="w-full"
+            >
+              {downloadingAll ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <FolderDown className="h-5 w-5 mr-2" />}
+              {downloadingAll ? "Downloading..." : `Download All Clips (${videoClipCount})`}
+            </Button>
           </div>
 
           {/* Stats */}
@@ -651,12 +684,12 @@ export const LovableAnimationGenerator = ({
             </Button>
           </div>
 
-          {/* Hidden audio for narration */}
           <audio ref={audioRef} className="hidden" />
         </CardContent>
       </Card>
     );
   }
+
 
   return null;
 };
