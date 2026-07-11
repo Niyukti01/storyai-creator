@@ -20,6 +20,11 @@ import {
   Film,
   CheckCircle2,
   Loader2,
+  Maximize2,
+  Minimize2,
+  Gauge,
+  FolderDown,
+  Clock,
 } from "lucide-react";
 
 interface LovableScene {
@@ -67,9 +72,14 @@ export const LovableAnimationGenerator = ({
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [genStatus, setGenStatus] = useState<{ phase?: string; currentScene?: number; totalScenes?: number; etaSeconds?: number | null } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const scenes = existingAnimation?.scenes || [];
@@ -92,13 +102,15 @@ export const LovableAnimationGenerator = ({
 
         if (data) {
           setLocalProgress(data.video_progress || 0);
+          const st = (data.avatar as any)?.lovableGenerationStatus;
+          if (st) setGenStatus(st);
           if (data.video_status !== "generating_lovable") {
             setGenerating(false);
             clearInterval(poll);
             onVideoGenerated();
           }
         }
-      }, 3000);
+      }, 2500);
       return () => clearInterval(poll);
     }
   }, [isLovableGenerating, projectId, onVideoGenerated]);
@@ -126,11 +138,19 @@ export const LovableAnimationGenerator = ({
     if (videoRef.current && currentHasVideo && currentScene?.videoUrl) {
       videoRef.current.src = currentScene.videoUrl;
       videoRef.current.volume = isMuted ? 0 : volume;
+      videoRef.current.playbackRate = playbackRate;
       if (isPlaying) {
         videoRef.current.play().catch(() => {});
       }
     }
-  }, [currentSceneIndex, currentScene?.videoUrl, currentHasVideo, isPlaying, volume, isMuted]);
+  }, [currentSceneIndex, currentScene?.videoUrl, currentHasVideo, isPlaying, volume, isMuted, playbackRate]);
+
+  // Track fullscreen state
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // When video ends, advance to next scene
   const handleVideoEnded = useCallback(() => {
@@ -192,14 +212,11 @@ export const LovableAnimationGenerator = ({
   };
 
   const handleDownload = async () => {
-    // Download the first video clip as a sample, or build combined download
     const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
     if (videoScenes.length === 0) {
       toast.error("No video clips available for download");
       return;
     }
-
-    // Download the first video clip
     try {
       const response = await fetch(videoScenes[0].videoUrl!);
       const blob = await response.blob();
@@ -212,6 +229,44 @@ export const LovableAnimationGenerator = ({
       toast.success("Video clip downloaded!");
     } catch (err) {
       toast.error("Failed to download video");
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
+    if (videoScenes.length === 0) {
+      toast.error("No video clips available for download");
+      return;
+    }
+    setDownloadingAll(true);
+    try {
+      for (let i = 0; i < videoScenes.length; i++) {
+        const s = videoScenes[i];
+        toast.info(`Downloading clip ${i + 1} of ${videoScenes.length}...`);
+        const response = await fetch(s.videoUrl!);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `story-scene-${s.sceneNumber}.mp4`;
+        a.click();
+        URL.revokeObjectURL(url);
+        await new Promise(r => setTimeout(r, 400));
+      }
+      toast.success(`Downloaded ${videoScenes.length} MP4 clips!`);
+    } catch (err) {
+      toast.error("Failed to download all clips");
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!playerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      playerContainerRef.current.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
     }
   };
 
@@ -347,12 +402,33 @@ export const LovableAnimationGenerator = ({
             <Progress value={progress} className="h-4" />
           </div>
 
+          {/* Live per-scene status from backend */}
+          {genStatus?.currentScene && genStatus?.totalScenes && (
+            <div className="bg-gradient-to-r from-pink-50 to-purple-50 dark:from-pink-950/40 dark:to-purple-950/40 rounded-lg p-4 flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p className="text-sm font-semibold text-pink-700 dark:text-pink-300">
+                  Generating Scene {genStatus.currentScene} of {genStatus.totalScenes}
+                </p>
+                {genStatus.phase && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{genStatus.phase}</p>
+                )}
+              </div>
+              {typeof genStatus.etaSeconds === "number" && genStatus.etaSeconds > 0 && (
+                <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <Clock className="w-4 h-4" />
+                  <span>~{Math.floor(genStatus.etaSeconds / 60)}m {genStatus.etaSeconds % 60}s left</span>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="text-center space-y-3">
             <div className="text-4xl">{phaseInfo.icon}</div>
             <p className="text-muted-foreground text-sm">
               AI video generation takes 3–5 minutes. Please keep this tab open.
             </p>
           </div>
+
 
           <div className="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
             <p className="font-medium mb-2">Pipeline stages:</p>
@@ -411,11 +487,13 @@ export const LovableAnimationGenerator = ({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Video / Image player */}
-          <div className="relative aspect-video rounded-xl overflow-hidden bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-950 dark:to-purple-950">
+          {/* Video / Image player (fullscreen target) */}
+          <div
+            ref={playerContainerRef}
+            className="relative aspect-video rounded-xl overflow-hidden bg-gradient-to-br from-pink-100 to-purple-100 dark:from-pink-950 dark:to-purple-950"
+          >
             {currentScene && (
               <>
-                {/* Render video element if scene has a video clip */}
                 {currentHasVideo ? (
                   <video
                     ref={videoRef}
@@ -432,10 +510,8 @@ export const LovableAnimationGenerator = ({
                   />
                 )}
 
-                {/* Gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent pointer-events-none" />
 
-                {/* Scene label */}
                 <div className="absolute top-3 left-3">
                   <Badge className="bg-pink-500/80 text-white backdrop-blur-sm text-xs">
                     {currentHasVideo ? "🎥" : "🖼️"} Scene {currentScene.sceneNumber}
@@ -443,14 +519,16 @@ export const LovableAnimationGenerator = ({
                   </Badge>
                 </div>
 
-                {/* Timer badge */}
-                <div className="absolute top-3 right-3">
+                {/* Timer + remaining */}
+                <div className="absolute top-3 right-3 flex gap-2">
                   <Badge className="bg-black/60 text-white backdrop-blur-sm">
                     {formatDuration(getCurrentOverallTime())} / {formatDuration(getTotalDuration())}
                   </Badge>
+                  <Badge className="bg-black/60 text-white backdrop-blur-sm">
+                    -{formatDuration(Math.max(0, getTotalDuration() - getCurrentOverallTime()))}
+                  </Badge>
                 </div>
 
-                {/* Narration subtitle */}
                 <div className="absolute bottom-14 left-4 right-4 pointer-events-none">
                   <div className="bg-black/70 rounded-xl px-5 py-3 backdrop-blur-sm">
                     <p className="text-white text-center text-sm md:text-base leading-relaxed">
@@ -459,7 +537,6 @@ export const LovableAnimationGenerator = ({
                   </div>
                 </div>
 
-                {/* Play overlay */}
                 {!isPlaying && (
                   <div
                     className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer"
@@ -498,29 +575,47 @@ export const LovableAnimationGenerator = ({
             ))}
           </div>
 
-          {/* Controls */}
+          {/* Playback controls */}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => { setCurrentSceneIndex(0); setCurrentTime(0); setIsPlaying(false); }}>
+              <Button variant="ghost" size="icon" title="Restart" onClick={() => { setCurrentSceneIndex(0); setCurrentTime(0); setIsPlaying(false); }}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={goToPrevScene} disabled={currentSceneIndex === 0}>
+              <Button variant="ghost" size="icon" title="Previous scene" onClick={goToPrevScene} disabled={currentSceneIndex === 0}>
                 <SkipBack className="h-4 w-4" />
               </Button>
               <Button
                 size="icon"
+                title={isPlaying ? "Pause" : "Play / Resume"}
                 onClick={togglePlay}
                 className="h-12 w-12 rounded-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
               >
                 {isPlaying ? <Pause className="h-5 w-5 text-white" /> : <Play className="h-5 w-5 text-white ml-0.5" />}
               </Button>
-              <Button variant="ghost" size="icon" onClick={goToNextScene} disabled={currentSceneIndex === scenes.length - 1}>
+              <Button variant="ghost" size="icon" title="Next scene" onClick={goToNextScene} disabled={currentSceneIndex === scenes.length - 1}>
                 <SkipForward className="h-4 w-4" />
+              </Button>
+
+              {/* Playback speed */}
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Playback speed"
+                onClick={() => {
+                  const rates = [0.5, 1, 1.25, 1.5, 2];
+                  const next = rates[(rates.indexOf(playbackRate) + 1) % rates.length];
+                  setPlaybackRate(next);
+                  if (videoRef.current) videoRef.current.playbackRate = next;
+                }}
+                className="gap-1 min-w-[3.5rem]"
+              >
+                <Gauge className="h-4 w-4" />
+                {playbackRate}x
               </Button>
             </div>
 
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setIsMuted(!isMuted)}>
+              <Button variant="ghost" size="icon" title={isMuted ? "Unmute" : "Mute"} onClick={() => setIsMuted(!isMuted)}>
                 {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
               </Button>
               <Slider
@@ -530,19 +625,33 @@ export const LovableAnimationGenerator = ({
                 onValueChange={(v) => { setVolume(v[0] / 100); setIsMuted(v[0] === 0); }}
                 className="w-20"
               />
-
-              {/* Download button */}
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleDownload}
-                disabled={videoClipCount === 0}
-                className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white"
-              >
-                <Download className="h-4 w-4 mr-1" />
-                Download MP4
+              <Button variant="ghost" size="icon" title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
+                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
               </Button>
             </div>
+          </div>
+
+          {/* Prominent download row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+            <Button
+              size="lg"
+              onClick={handleDownload}
+              disabled={videoClipCount === 0}
+              className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-lg"
+            >
+              <Download className="h-5 w-5 mr-2" />
+              Download Video (MP4)
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleDownloadAll}
+              disabled={videoClipCount === 0 || downloadingAll}
+              className="w-full"
+            >
+              {downloadingAll ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <FolderDown className="h-5 w-5 mr-2" />}
+              {downloadingAll ? "Downloading..." : `Download All Clips (${videoClipCount})`}
+            </Button>
           </div>
 
           {/* Stats */}
@@ -575,12 +684,12 @@ export const LovableAnimationGenerator = ({
             </Button>
           </div>
 
-          {/* Hidden audio for narration */}
           <audio ref={audioRef} className="hidden" />
         </CardContent>
       </Card>
     );
   }
+
 
   return null;
 };
