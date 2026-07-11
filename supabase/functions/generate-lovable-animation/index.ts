@@ -681,7 +681,13 @@ serve(async (req) => {
       })
 
       const imgProgress = 3 + Math.floor(((i + 1) / scenes.length) * 27)
-      await supabase.from('projects').update({ video_progress: imgProgress }).eq('id', projectId)
+      await updateGenerationStatus(supabase, projectId, project.avatar, {
+        phase: `Painting scene ${i + 1} of ${scenes.length}`,
+        currentScene: i + 1,
+        totalScenes: scenes.length,
+        startedAt: startTime,
+        progress: imgProgress,
+      })
       console.log(`Image ${i + 1}/${scenes.length} done. Progress: ${imgProgress}%`)
     }
 
