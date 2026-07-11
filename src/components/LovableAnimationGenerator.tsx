@@ -97,13 +97,15 @@ export const LovableAnimationGenerator = ({
 
         if (data) {
           setLocalProgress(data.video_progress || 0);
+          const st = (data.avatar as any)?.lovableGenerationStatus;
+          if (st) setGenStatus(st);
           if (data.video_status !== "generating_lovable") {
             setGenerating(false);
             clearInterval(poll);
             onVideoGenerated();
           }
         }
-      }, 3000);
+      }, 2500);
       return () => clearInterval(poll);
     }
   }, [isLovableGenerating, projectId, onVideoGenerated]);
