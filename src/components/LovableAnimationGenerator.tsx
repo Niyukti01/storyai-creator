@@ -20,6 +20,11 @@ import {
   Film,
   CheckCircle2,
   Loader2,
+  Maximize2,
+  Minimize2,
+  Gauge,
+  FolderDown,
+  Clock,
 } from "lucide-react";
 
 interface LovableScene {
