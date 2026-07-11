@@ -734,7 +734,13 @@ serve(async (req) => {
       }
 
       const videoProgress = 40 + Math.floor(((i + 1) / activeTasks.length) * 35)
-      await supabase.from('projects').update({ video_progress: videoProgress }).eq('id', projectId)
+      await updateGenerationStatus(supabase, projectId, project.avatar, {
+        phase: `Animating scene ${i + 1} of ${activeTasks.length} (Runway)`,
+        currentScene: i + 1,
+        totalScenes: activeTasks.length,
+        startedAt: startTime,
+        progress: videoProgress,
+      })
     }
 
     const scenesWithVideo = sceneDataList.filter(s => s.videoUrl)
