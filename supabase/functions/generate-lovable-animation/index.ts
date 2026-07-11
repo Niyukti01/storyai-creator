@@ -765,7 +765,13 @@ serve(async (req) => {
         }
 
         const audioProgress = 77 + Math.floor(((i + 1) / scenesWithImages.length) * 13)
-        await supabase.from('projects').update({ video_progress: audioProgress }).eq('id', projectId)
+        await updateGenerationStatus(supabase, projectId, project.avatar, {
+          phase: `Recording narration ${i + 1} of ${scenesWithImages.length}`,
+          currentScene: i + 1,
+          totalScenes: scenesWithImages.length,
+          startedAt: startTime,
+          progress: audioProgress,
+        })
       }
     } else {
       console.log('Skipping audio: no ElevenLabs key or no images')
