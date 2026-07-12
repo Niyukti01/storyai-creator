@@ -910,7 +910,7 @@ const StoryboardPreview = () => {
                   </Button>
                 </div>
               </div>
-            ) : project.video_status !== 'generating' ? (
+            ) : project.video_status !== 'generating_lovable' ? (
               <Button 
                 size="lg" 
                 className="gap-2"
