@@ -9,6 +9,7 @@ const corsHeaders = {
 const MAX_SCENES = 5
 const RUNWAY_API = 'https://api.dev.runwayml.com/v1'
 const RUNWAY_VERSION = '2024-11-06'
+const RUNWAY_TEXT_MODEL = 'gen4.5'
 
 interface SceneData {
   sceneNumber: number
@@ -274,35 +275,37 @@ function validateRunwayPrompt(prompt: string, sceneNumber: number): string {
   return prompt
 }
 
-// Start a Runway image-to-video task, returns task ID
+function isFailureStatus(status: string | undefined): boolean {
+  const normalized = (status || '').toUpperCase()
+  return normalized === 'FAILED' || normalized === 'TIMEOUT' || normalized === 'TIMED_OUT' || normalized === 'ERROR' || normalized === 'CANCELLED'
+}
+
+function isSuccessStatus(status: string | undefined): boolean {
+  const normalized = (status || '').toUpperCase()
+  return normalized === 'SUCCEEDED' || normalized === 'COMPLETED'
+}
+
+// Start a Runway text-to-video task. No image endpoint or image fallback is used.
 async function startRunwayVideoTask(
-  imageUrl: string,
   scene: any,
   characters: any[],
   runwayApiKey: string
-): Promise<string | null> {
-  // Runway requires a publicly accessible URL, not a data URI
-  if (imageUrl.startsWith('data:')) {
-    console.error(`Scene ${scene.scene_number}: Cannot use data URI for Runway — need public URL`)
-    return null
-  }
-
+): Promise<string> {
   const rawPrompt = buildRunwayPrompt(scene, characters)
   const promptText = validateRunwayPrompt(rawPrompt, scene.scene_number || 0)
 
   const requestBody = {
-    model: 'gen3a_turbo',
-    promptImage: imageUrl,
+    model: RUNWAY_TEXT_MODEL,
     promptText,
     duration: 5,
     ratio: '1280:720',
   }
 
   try {
-    console.log(`Runway request for scene ${scene.scene_number}: model=${requestBody.model}, duration=${requestBody.duration}, imageUrl=${imageUrl.substring(0, 100)}`)
+    console.log(`Runway request sent for scene ${scene.scene_number}: endpoint=/text_to_video model=${requestBody.model}, duration=${requestBody.duration}, ratio=${requestBody.ratio}`)
     console.log(`Runway prompt for scene ${scene.scene_number}: ${promptText.substring(0, 300)}`)
     
-    const response = await fetch(`${RUNWAY_API}/image_to_video`, {
+    const response = await fetch(`${RUNWAY_API}/text_to_video`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${runwayApiKey}`,
@@ -316,7 +319,7 @@ async function startRunwayVideoTask(
     
     if (!response.ok) {
       console.error(`Runway task start FAILED for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
-      return null
+      throw new Error(`Runway request failed for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
     }
 
     let data
@@ -324,23 +327,27 @@ async function startRunwayVideoTask(
       data = JSON.parse(responseText)
     } catch {
       console.error(`Runway response not JSON for scene ${scene.scene_number}: ${responseText}`)
-      return null
+      throw new Error(`Runway response was invalid for scene ${scene.scene_number}`)
     }
 
-    console.log(`Runway task started for scene ${scene.scene_number}: ID=${data.id}, status=${data.status}`)
-    return data.id || null
+    if (!data.id) {
+      throw new Error(`Runway did not return a job ID for scene ${scene.scene_number}`)
+    }
+
+    console.log(`Runway job ID received for scene ${scene.scene_number}: ${data.id}, status=${data.status || 'unknown'}`)
+    return data.id
   } catch (err) {
     console.error(`Runway task exception for scene ${scene.scene_number}:`, err)
-    return null
+    throw err
   }
 }
 
-// Poll Runway task until SUCCEEDED or FAILED (max ~3 minutes per task)
+// Poll Runway task until COMPLETED/SUCCEEDED or fail fast on FAILED/TIMEOUT/ERROR.
 async function pollRunwayTask(
   taskId: string,
   runwayApiKey: string,
   maxPollSeconds = 180
-): Promise<string | null> {
+): Promise<string> {
   const start = Date.now()
   const pollInterval = 10000 // 10s
 
@@ -356,50 +363,58 @@ async function pollRunwayTask(
       if (!response.ok) {
         const errBody = await response.text()
         console.error(`Runway poll error for ${taskId}: HTTP ${response.status} — ${errBody}`)
-        await new Promise(r => setTimeout(r, pollInterval))
-        continue
+        throw new Error(`Runway polling failed for job ${taskId}: HTTP ${response.status} — ${errBody}`)
       }
 
       const data = await response.json()
       const elapsed = Math.round((Date.now() - start) / 1000)
-      console.log(`Runway task ${taskId} status: ${data.status} (${elapsed}s elapsed)`)
+      console.log(`Polling status for Runway job ${taskId}: ${data.status} (${elapsed}s elapsed)`)
 
-      if (data.status === 'SUCCEEDED') {
+      if (isSuccessStatus(data.status)) {
         // output can be array of URLs or a single URL string
         const videoUrl = Array.isArray(data.output) ? data.output[0] : data.output
-        console.log(`Runway task ${taskId} SUCCEEDED — video URL: ${videoUrl?.substring(0, 120)}`)
-        return videoUrl || null
+        if (!videoUrl || typeof videoUrl !== 'string') {
+          throw new Error(`Runway job ${taskId} completed without a video URL`)
+        }
+        console.log(`Video URL received for Runway job ${taskId}: ${videoUrl.substring(0, 120)}`)
+        return videoUrl
       }
 
-      if (data.status === 'FAILED') {
+      if (isFailureStatus(data.status)) {
         console.error(`Runway task ${taskId} FAILED:`, JSON.stringify({ failure: data.failure, failureCode: data.failureCode }))
-        return null
+        throw new Error(`Runway generation failed for job ${taskId}: ${data.failure || data.failureCode || data.status}`)
       }
 
       // PENDING, THROTTLED, RUNNING — keep polling
     } catch (err) {
       console.error(`Runway poll exception for ${taskId}:`, err)
+      throw err
     }
 
     await new Promise(r => setTimeout(r, pollInterval))
   }
 
   console.error(`Runway task ${taskId} timed out after ${maxPollSeconds}s`)
-  return null
+  throw new Error(`Runway generation timed out for job ${taskId}`)
 }
 async function uploadVideoToStorage(
   videoUrl: string,
   supabase: any,
   projectId: string,
   sceneNumber: number
-): Promise<string | null> {
+): Promise<string> {
   try {
+    console.log(`Scene downloaded: fetching Runway MP4 for scene ${sceneNumber}`)
     const response = await fetch(videoUrl)
     if (!response.ok) {
       console.error(`Failed to download video for scene ${sceneNumber}: ${response.status}`)
-      return null
+      throw new Error(`Failed to download Runway video for scene ${sceneNumber}: HTTP ${response.status}`)
     }
     const videoBuffer = await response.arrayBuffer()
+    if (videoBuffer.byteLength === 0) {
+      throw new Error(`Downloaded Runway video for scene ${sceneNumber} was empty`)
+    }
+
     const fileName = `${projectId}/scene-video-${sceneNumber}-${Date.now()}.mp4`
 
     const { error } = await supabase.storage
@@ -408,14 +423,18 @@ async function uploadVideoToStorage(
 
     if (error) {
       console.error(`Video upload error for scene ${sceneNumber}:`, error)
-      return null
+      throw new Error(`Failed to store scene ${sceneNumber} MP4: ${error.message || JSON.stringify(error)}`)
     }
 
     const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
+    if (!data.publicUrl || !data.publicUrl.includes('.mp4')) {
+      throw new Error(`Stored scene ${sceneNumber} did not produce a valid MP4 URL`)
+    }
+    console.log(`Scene merged: scene ${sceneNumber} MP4 stored at ${data.publicUrl.substring(0, 120)}`)
     return data.publicUrl
   } catch (err) {
     console.error(`Video upload exception for scene ${sceneNumber}:`, err)
-    return null
+    throw err
   }
 }
 
