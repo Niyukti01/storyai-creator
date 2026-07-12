@@ -9,10 +9,10 @@ const corsHeaders = {
 const MAX_SCENES = 5
 const RUNWAY_API = 'https://api.dev.runwayml.com/v1'
 const RUNWAY_VERSION = '2024-11-06'
+const RUNWAY_TEXT_MODEL = 'gen4.5'
 
 interface SceneData {
   sceneNumber: number
-  imageUrl: string | null
   videoUrl: string | null
   narration: string
   audioUrl: string | null
@@ -31,119 +31,6 @@ function optimizeScenes(scenes: any[], max: number): any[] {
   const step = scenes.length / max
   return Array.from({ length: max }, (_, i) => scenes[Math.min(Math.floor(i * step), scenes.length - 1)])
     .map((s, i) => ({ ...s, scene_number: i + 1 }))
-}
-
-// Generate a scene illustration using Lovable AI (Gemini image model)
-async function generateSceneImage(
-  scene: any,
-  characters: any[],
-  genre: string,
-  apiKey: string,
-  retries = 2
-): Promise<{ base64: string | null; url: string | null }> {
-  const sceneCharacters = scene.dialogue?.map((d: any) => d.character) || []
-  const characterDetails = characters
-    .filter((c: any) => sceneCharacters.includes(c.name))
-    .map((c: any) => `${c.name}: ${c.description}`)
-    .join('. ')
-
-  const prompt = `Cinematic 3D animated scene, Pixar-quality rendering with dramatic lighting and depth. Style: soft 3D animation, volumetric lighting, cinematic color grading, depth of field, warm pastel tones, rounded expressive characters with big eyes, rich detailed environment with foreground/midground/background layers. Setting: ${scene.setting}. Action: ${scene.action || scene.description}. ${characterDetails ? `Characters: ${characterDetails}.` : ''} Genre: ${genre}. Wide 16:9 cinematic composition, dramatic camera angle, cozy magical atmosphere.`
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-pro-image-preview',
-          messages: [{ role: 'user', content: prompt }],
-          modalities: ['image', 'text']
-        }),
-      })
-
-      if (response.status === 503 && attempt < retries) {
-        console.log(`Image gen 503 for scene ${scene.scene_number}, retrying in 5s...`)
-        await new Promise(r => setTimeout(r, 5000))
-        continue
-      }
-
-      if (!response.ok) {
-        const errText = await response.text()
-        console.error(`Image gen failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
-        return { base64: null, url: null }
-      }
-
-      const data = await response.json()
-
-      // Try multiple response shapes
-      const parts = data.choices?.[0]?.message?.content
-      if (Array.isArray(parts)) {
-        for (const part of parts) {
-          if (part.type === 'image_url' && part.image_url?.url) {
-            const url = part.image_url.url
-            if (url.startsWith('data:')) {
-              return { base64: url.split(',')[1], url }
-            }
-            return { base64: null, url }
-          }
-          if (part.inlineData?.data) {
-            return { base64: part.inlineData.data, url: `data:image/png;base64,${part.inlineData.data}` }
-          }
-        }
-      }
-
-      const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
-        || data.choices?.[0]?.message?.image_url?.url
-      if (imgUrl) {
-        if (imgUrl.startsWith('data:')) {
-          return { base64: imgUrl.split(',')[1], url: imgUrl }
-        }
-        return { base64: null, url: imgUrl }
-      }
-
-      console.error(`No image found in response for scene ${scene.scene_number}`)
-      return { base64: null, url: null }
-    } catch (error) {
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, 3000))
-        continue
-      }
-      console.error(`Image generation exception for scene ${scene.scene_number}:`, error)
-      return { base64: null, url: null }
-    }
-  }
-  return { base64: null, url: null }
-}
-
-// Upload base64 image to storage & return public URL
-async function uploadImageToStorage(
-  base64Data: string,
-  supabase: any,
-  projectId: string,
-  sceneNumber: number
-): Promise<string | null> {
-  try {
-    const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
-    const fileName = `${projectId}/scene-${sceneNumber}-${Date.now()}.png`
-
-    const { error } = await supabase.storage
-      .from('generated-videos')
-      .upload(fileName, binaryData, { contentType: 'image/png', upsert: true })
-
-    if (error) {
-      console.error(`Image upload error for scene ${sceneNumber}:`, error)
-      return null
-    }
-
-    const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
-    return data.publicUrl
-  } catch (err) {
-    console.error(`Image upload exception for scene ${sceneNumber}:`, err)
-    return null
-  }
 }
 
 // Motion presets: curated camera + character action combos for different scene types
@@ -388,35 +275,37 @@ function validateRunwayPrompt(prompt: string, sceneNumber: number): string {
   return prompt
 }
 
-// Start a Runway image-to-video task, returns task ID
+function isFailureStatus(status: string | undefined): boolean {
+  const normalized = (status || '').toUpperCase()
+  return normalized === 'FAILED' || normalized === 'TIMEOUT' || normalized === 'TIMED_OUT' || normalized === 'ERROR' || normalized === 'CANCELLED'
+}
+
+function isSuccessStatus(status: string | undefined): boolean {
+  const normalized = (status || '').toUpperCase()
+  return normalized === 'SUCCEEDED' || normalized === 'COMPLETED'
+}
+
+// Start a Runway text-to-video task. No image endpoint or image fallback is used.
 async function startRunwayVideoTask(
-  imageUrl: string,
   scene: any,
   characters: any[],
   runwayApiKey: string
-): Promise<string | null> {
-  // Runway requires a publicly accessible URL, not a data URI
-  if (imageUrl.startsWith('data:')) {
-    console.error(`Scene ${scene.scene_number}: Cannot use data URI for Runway — need public URL`)
-    return null
-  }
-
+): Promise<string> {
   const rawPrompt = buildRunwayPrompt(scene, characters)
   const promptText = validateRunwayPrompt(rawPrompt, scene.scene_number || 0)
 
   const requestBody = {
-    model: 'gen3a_turbo',
-    promptImage: imageUrl,
+    model: RUNWAY_TEXT_MODEL,
     promptText,
     duration: 5,
     ratio: '1280:720',
   }
 
   try {
-    console.log(`Runway request for scene ${scene.scene_number}: model=${requestBody.model}, duration=${requestBody.duration}, imageUrl=${imageUrl.substring(0, 100)}`)
+    console.log(`Runway request sent for scene ${scene.scene_number}: endpoint=/text_to_video model=${requestBody.model}, duration=${requestBody.duration}, ratio=${requestBody.ratio}`)
     console.log(`Runway prompt for scene ${scene.scene_number}: ${promptText.substring(0, 300)}`)
     
-    const response = await fetch(`${RUNWAY_API}/image_to_video`, {
+    const response = await fetch(`${RUNWAY_API}/text_to_video`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${runwayApiKey}`,
@@ -430,7 +319,7 @@ async function startRunwayVideoTask(
     
     if (!response.ok) {
       console.error(`Runway task start FAILED for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
-      return null
+      throw new Error(`Runway request failed for scene ${scene.scene_number}: HTTP ${response.status} — ${responseText}`)
     }
 
     let data
@@ -438,23 +327,27 @@ async function startRunwayVideoTask(
       data = JSON.parse(responseText)
     } catch {
       console.error(`Runway response not JSON for scene ${scene.scene_number}: ${responseText}`)
-      return null
+      throw new Error(`Runway response was invalid for scene ${scene.scene_number}`)
     }
 
-    console.log(`Runway task started for scene ${scene.scene_number}: ID=${data.id}, status=${data.status}`)
-    return data.id || null
+    if (!data.id) {
+      throw new Error(`Runway did not return a job ID for scene ${scene.scene_number}`)
+    }
+
+    console.log(`Runway job ID received for scene ${scene.scene_number}: ${data.id}, status=${data.status || 'unknown'}`)
+    return data.id
   } catch (err) {
     console.error(`Runway task exception for scene ${scene.scene_number}:`, err)
-    return null
+    throw err
   }
 }
 
-// Poll Runway task until SUCCEEDED or FAILED (max ~3 minutes per task)
+// Poll Runway task until COMPLETED/SUCCEEDED or fail fast on FAILED/TIMEOUT/ERROR.
 async function pollRunwayTask(
   taskId: string,
   runwayApiKey: string,
   maxPollSeconds = 180
-): Promise<string | null> {
+): Promise<string> {
   const start = Date.now()
   const pollInterval = 10000 // 10s
 
@@ -470,50 +363,58 @@ async function pollRunwayTask(
       if (!response.ok) {
         const errBody = await response.text()
         console.error(`Runway poll error for ${taskId}: HTTP ${response.status} — ${errBody}`)
-        await new Promise(r => setTimeout(r, pollInterval))
-        continue
+        throw new Error(`Runway polling failed for job ${taskId}: HTTP ${response.status} — ${errBody}`)
       }
 
       const data = await response.json()
       const elapsed = Math.round((Date.now() - start) / 1000)
-      console.log(`Runway task ${taskId} status: ${data.status} (${elapsed}s elapsed)`)
+      console.log(`Polling status for Runway job ${taskId}: ${data.status} (${elapsed}s elapsed)`)
 
-      if (data.status === 'SUCCEEDED') {
+      if (isSuccessStatus(data.status)) {
         // output can be array of URLs or a single URL string
         const videoUrl = Array.isArray(data.output) ? data.output[0] : data.output
-        console.log(`Runway task ${taskId} SUCCEEDED — video URL: ${videoUrl?.substring(0, 120)}`)
-        return videoUrl || null
+        if (!videoUrl || typeof videoUrl !== 'string') {
+          throw new Error(`Runway job ${taskId} completed without a video URL`)
+        }
+        console.log(`Video URL received for Runway job ${taskId}: ${videoUrl.substring(0, 120)}`)
+        return videoUrl
       }
 
-      if (data.status === 'FAILED') {
+      if (isFailureStatus(data.status)) {
         console.error(`Runway task ${taskId} FAILED:`, JSON.stringify({ failure: data.failure, failureCode: data.failureCode }))
-        return null
+        throw new Error(`Runway generation failed for job ${taskId}: ${data.failure || data.failureCode || data.status}`)
       }
 
       // PENDING, THROTTLED, RUNNING — keep polling
     } catch (err) {
       console.error(`Runway poll exception for ${taskId}:`, err)
+      throw err
     }
 
     await new Promise(r => setTimeout(r, pollInterval))
   }
 
   console.error(`Runway task ${taskId} timed out after ${maxPollSeconds}s`)
-  return null
+  throw new Error(`Runway generation timed out for job ${taskId}`)
 }
 async function uploadVideoToStorage(
   videoUrl: string,
   supabase: any,
   projectId: string,
   sceneNumber: number
-): Promise<string | null> {
+): Promise<string> {
   try {
+    console.log(`Scene downloaded: fetching Runway MP4 for scene ${sceneNumber}`)
     const response = await fetch(videoUrl)
     if (!response.ok) {
       console.error(`Failed to download video for scene ${sceneNumber}: ${response.status}`)
-      return null
+      throw new Error(`Failed to download Runway video for scene ${sceneNumber}: HTTP ${response.status}`)
     }
     const videoBuffer = await response.arrayBuffer()
+    if (videoBuffer.byteLength === 0) {
+      throw new Error(`Downloaded Runway video for scene ${sceneNumber} was empty`)
+    }
+
     const fileName = `${projectId}/scene-video-${sceneNumber}-${Date.now()}.mp4`
 
     const { error } = await supabase.storage
@@ -522,14 +423,18 @@ async function uploadVideoToStorage(
 
     if (error) {
       console.error(`Video upload error for scene ${sceneNumber}:`, error)
-      return null
+      throw new Error(`Failed to store scene ${sceneNumber} MP4: ${error.message || JSON.stringify(error)}`)
     }
 
     const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
+    if (!data.publicUrl || !data.publicUrl.includes('.mp4')) {
+      throw new Error(`Stored scene ${sceneNumber} did not produce a valid MP4 URL`)
+    }
+    console.log(`Scene merged: scene ${sceneNumber} MP4 stored at ${data.publicUrl.substring(0, 120)}`)
     return data.publicUrl
   } catch (err) {
     console.error(`Video upload exception for scene ${sceneNumber}:`, err)
-    return null
+    throw err
   }
 }
 
@@ -622,17 +527,18 @@ serve(async (req) => {
     scenes = optimizeScenes(scenes, MAX_SCENES)
     console.log(`Processing ${scenes.length} scenes`)
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
     const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY')
     const RUNWAY_API_KEY = Deno.env.get('RUNWAY_API_KEY')
 
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured')
     if (!RUNWAY_API_KEY) throw new Error('RUNWAY_API_KEY is not configured')
 
     const sceneDataList: SceneData[] = []
 
-    // ============ PHASE 1: Generate scene images (0-30%) ============
-    console.log('=== PHASE 1: Generating scene images ===')
+    console.log('Story created')
+    console.log(`Scenes extracted: ${scenes.length}`)
+
+    // ============ PHASE 1: Prepare Runway scene prompts (0-10%) ============
+    console.log('=== PHASE 1: Preparing Runway video scenes ===')
 
     for (let i = 0; i < scenes.length; i++) {
       // Check cancellation
@@ -646,33 +552,11 @@ serve(async (req) => {
       }
 
       const scene = scenes[i]
-      const { base64, url } = await generateSceneImage(scene, characters, project.genre, LOVABLE_API_KEY)
-
-      let storedUrl: string | null = null
-      
-      // Always upload to storage so we get a public URL (Runway needs public URLs, not data URIs)
-      if (base64) {
-        storedUrl = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
-      } else if (url && url.startsWith('data:')) {
-        // Extract base64 from data URL and upload
-        const b64 = url.split(',')[1]
-        if (b64) {
-          storedUrl = await uploadImageToStorage(b64, supabase, projectId, scene.scene_number)
-        }
-      } else if (url) {
-        storedUrl = url
-      }
-      
-      if (!storedUrl) {
-        console.error(`Scene ${scene.scene_number}: No usable image URL generated`)
-      }
-
       const dialogueText = scene.dialogue?.map((d: any) => `${d.character}: "${d.line}"`).join(' ') || ''
       const narration = shortenNarration(`${scene.description}. ${dialogueText}`.trim(), 50)
 
       sceneDataList.push({
         sceneNumber: scene.scene_number,
-        imageUrl: storedUrl || null,
         videoUrl: null,
         narration,
         audioUrl: null,
@@ -680,79 +564,90 @@ serve(async (req) => {
         setting: scene.setting || ''
       })
 
-      const imgProgress = 3 + Math.floor(((i + 1) / scenes.length) * 27)
+      const prepProgress = 3 + Math.floor(((i + 1) / scenes.length) * 7)
       await updateGenerationStatus(supabase, projectId, project.avatar, {
-        phase: `Painting scene ${i + 1} of ${scenes.length}`,
+        phase: `Preparing Runway scene ${i + 1} of ${scenes.length}`,
         currentScene: i + 1,
         totalScenes: scenes.length,
         startedAt: startTime,
-        progress: imgProgress,
+        progress: prepProgress,
       })
-      console.log(`Image ${i + 1}/${scenes.length} done. Progress: ${imgProgress}%`)
+      console.log(`Runway scene ${i + 1}/${scenes.length} prepared. Progress: ${prepProgress}%`)
     }
 
-    const scenesWithImages = sceneDataList.filter(s => s.imageUrl)
-    console.log(`${scenesWithImages.length}/${scenes.length} images generated`)
-
-    // ============ PHASE 2: Start Runway video tasks (30-40%) ============
+    // ============ PHASE 2: Start Runway video tasks (10-25%) ============
     console.log('=== PHASE 2: Starting Runway video generation tasks ===')
-    await supabase.from('projects').update({ video_progress: 32 }).eq('id', projectId)
+    await updateGenerationStatus(supabase, projectId, project.avatar, {
+      phase: 'Sending scenes to Runway video generation',
+      currentScene: 1,
+      totalScenes: scenes.length,
+      startedAt: startTime,
+      progress: 10,
+    })
 
-    const taskMap: { sceneNumber: number; taskId: string | null; imageUrl: string }[] = []
+    const taskMap: { sceneNumber: number; taskId: string }[] = []
 
-    for (const scene of scenesWithImages) {
-      if (!scene.imageUrl) continue
-      const fullScene = scenes.find((s: any) => s.scene_number === scene.sceneNumber) || {}
-      const taskId = await startRunwayVideoTask(scene.imageUrl, fullScene, characters, RUNWAY_API_KEY)
-      taskMap.push({ sceneNumber: scene.sceneNumber, taskId, imageUrl: scene.imageUrl! })
+    for (let i = 0; i < scenes.length; i++) {
+      const fullScene = scenes[i]
+      const taskId = await startRunwayVideoTask(fullScene, characters, RUNWAY_API_KEY)
+      taskMap.push({ sceneNumber: fullScene.scene_number, taskId })
+
+      const requestProgress = 10 + Math.floor(((i + 1) / scenes.length) * 15)
+      await updateGenerationStatus(supabase, projectId, project.avatar, {
+        phase: `Runway request sent for scene ${i + 1} of ${scenes.length}`,
+        currentScene: i + 1,
+        totalScenes: scenes.length,
+        startedAt: startTime,
+        progress: requestProgress,
+      })
 
       // Small delay between task starts to avoid rate limits
       await new Promise(r => setTimeout(r, 1500))
     }
 
-    const activeTasks = taskMap.filter(t => t.taskId)
-    console.log(`${activeTasks.length} Runway tasks started`)
-    await supabase.from('projects').update({ video_progress: 40 }).eq('id', projectId)
+    if (taskMap.length !== scenes.length) {
+      throw new Error(`Runway did not start every scene: ${taskMap.length}/${scenes.length} jobs started`)
+    }
+    console.log(`${taskMap.length} Runway tasks started`)
+    await supabase.from('projects').update({ video_progress: 25 }).eq('id', projectId)
 
-    // ============ PHASE 3: Poll Runway tasks until complete (40-75%) ============
+    // ============ PHASE 3: Poll Runway tasks until complete (25-75%) ============
     console.log('=== PHASE 3: Polling Runway tasks for completion ===')
 
-    for (let i = 0; i < activeTasks.length; i++) {
-      const task = activeTasks[i]
-      const videoUrl = await pollRunwayTask(task.taskId!, RUNWAY_API_KEY)
-
-      if (videoUrl) {
-        // Download and upload to our storage
-        const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
-        const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
-        if (sceneData) {
-          sceneData.videoUrl = storedVideoUrl || videoUrl
-        }
-        console.log(`Scene ${task.sceneNumber} video ready: ${storedVideoUrl ? 'stored' : 'direct URL'}`)
-      } else {
-        console.log(`Scene ${task.sceneNumber} video failed — will use image fallback`)
+    for (let i = 0; i < taskMap.length; i++) {
+      const task = taskMap[i]
+      const videoUrl = await pollRunwayTask(task.taskId, RUNWAY_API_KEY)
+      const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
+      const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
+      if (!sceneData) {
+        throw new Error(`Internal scene data missing for scene ${task.sceneNumber}`)
       }
+      sceneData.videoUrl = storedVideoUrl
+      console.log(`Scene ${task.sceneNumber} video ready: stored MP4`)
 
-      const videoProgress = 40 + Math.floor(((i + 1) / activeTasks.length) * 35)
+      const videoProgress = 25 + Math.floor(((i + 1) / taskMap.length) * 50)
       await updateGenerationStatus(supabase, projectId, project.avatar, {
-        phase: `Animating scene ${i + 1} of ${activeTasks.length} (Runway)`,
+        phase: `Runway scene ${i + 1} of ${taskMap.length} completed`,
         currentScene: i + 1,
-        totalScenes: activeTasks.length,
+        totalScenes: taskMap.length,
         startedAt: startTime,
         progress: videoProgress,
       })
     }
 
-    const scenesWithVideo = sceneDataList.filter(s => s.videoUrl)
-    console.log(`${scenesWithVideo.length}/${scenesWithImages.length} video clips generated`)
+    const scenesWithVideo = sceneDataList.filter(s => s.videoUrl && s.videoUrl.includes('.mp4'))
+    console.log(`${scenesWithVideo.length}/${scenes.length} video clips generated`)
+    if (scenesWithVideo.length !== scenes.length) {
+      throw new Error(`Runway video generation incomplete: ${scenesWithVideo.length}/${scenes.length} MP4 clips created`)
+    }
 
     // ============ PHASE 4: Narration Audio via ElevenLabs (75-90%) ============
     console.log('=== PHASE 4: Generating narration audio ===')
     await supabase.from('projects').update({ video_progress: 77 }).eq('id', projectId)
 
-    if (ELEVENLABS_API_KEY && scenesWithImages.length > 0) {
-      for (let i = 0; i < scenesWithImages.length; i++) {
-        const scene = scenesWithImages[i]
+    if (ELEVENLABS_API_KEY && scenesWithVideo.length > 0) {
+      for (let i = 0; i < scenesWithVideo.length; i++) {
+        const scene = scenesWithVideo[i]
         const audioUrl = await generateNarrationAudio(
           scene.narration, ELEVENLABS_API_KEY, supabase, projectId, scene.sceneNumber
         )
@@ -764,42 +659,46 @@ serve(async (req) => {
           break
         }
 
-        const audioProgress = 77 + Math.floor(((i + 1) / scenesWithImages.length) * 13)
+        const audioProgress = 77 + Math.floor(((i + 1) / scenesWithVideo.length) * 13)
         await updateGenerationStatus(supabase, projectId, project.avatar, {
-          phase: `Recording narration ${i + 1} of ${scenesWithImages.length}`,
+          phase: `Recording narration ${i + 1} of ${scenesWithVideo.length}`,
           currentScene: i + 1,
-          totalScenes: scenesWithImages.length,
+          totalScenes: scenesWithVideo.length,
           startedAt: startTime,
           progress: audioProgress,
         })
       }
     } else {
-      console.log('Skipping audio: no ElevenLabs key or no images')
+      console.log('Skipping audio: no ElevenLabs key or no completed Runway videos')
     }
 
     // ============ PHASE 5: Save animation data (90-100%) ============
     console.log('=== PHASE 5: Saving animation data ===')
     await supabase.from('projects').update({ video_progress: 92 }).eq('id', projectId)
 
-    const totalDuration = scenesWithImages.reduce((s, sc) => s + sc.duration, 0)
+    const totalDuration = scenesWithVideo.reduce((s, sc) => s + sc.duration, 0)
     const generationTimeSec = Math.round((Date.now() - startTime) / 1000)
+    const mainVideoUrl = scenesWithVideo[0]?.videoUrl || null
+    if (!mainVideoUrl || !mainVideoUrl.includes('.mp4')) {
+      throw new Error('Final MP4 verification failed: no valid Runway MP4 video URL was produced')
+    }
 
     const lovableAnimationData = {
       type: 'lovable_animation',
-      scenes: scenesWithImages.map(s => ({
+      scenes: scenesWithVideo.map(s => ({
         sceneNumber: s.sceneNumber,
-        imageUrl: s.imageUrl,
-        videoUrl: s.videoUrl || s.imageUrl, // fallback to image if no video
+        videoUrl: s.videoUrl,
         narration: s.narration,
         audioUrl: s.audioUrl,
         duration: s.duration,
         setting: s.setting,
-        hasVideo: !!s.videoUrl,
+        hasVideo: true,
       })),
       totalDuration,
-      totalScenes: scenesWithImages.length,
+      totalScenes: scenesWithVideo.length,
       videosGenerated: scenesWithVideo.length,
-      isFullAnimation: scenesWithVideo.length > 0,
+      isFullAnimation: scenesWithVideo.length === scenes.length,
+      finalVideoUrl: mainVideoUrl,
       generatedAt: new Date().toISOString(),
       generationTimeSeconds: generationTimeSec,
       settings: { maxScenes: MAX_SCENES, resolution: '720p', fps: 24 }
@@ -811,9 +710,9 @@ serve(async (req) => {
     }).eq('id', projectId)
 
     await supabase.from('projects').update({ video_progress: 96 }).eq('id', projectId)
+    console.log(`Final MP4 rendered: verified Runway MP4 URL ${mainVideoUrl.substring(0, 120)}`)
 
     // Create video version record
-    const mainVideoUrl = scenesWithVideo[0]?.videoUrl || scenesWithImages[0]?.imageUrl || null
     if (mainVideoUrl) {
       const { data: existingVersions } = await supabase
         .from('video_versions')
@@ -832,15 +731,16 @@ serve(async (req) => {
         duration_seconds: totalDuration,
         metadata: {
           type: 'lovable_animation',
-          scenes_count: scenesWithImages.length,
+            scenes_count: scenesWithVideo.length,
           video_clips: scenesWithVideo.length,
-          has_narration: scenesWithImages.some(s => s.audioUrl),
+            has_narration: scenesWithVideo.some(s => s.audioUrl),
           generation_time_seconds: generationTimeSec
         }
       })
     }
 
     await supabase.from('projects').update({
+      video_url: mainVideoUrl,
       video_status: 'lovable_completed',
       video_progress: 100,
       video_generated_at: new Date().toISOString(),
@@ -851,10 +751,11 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        totalScenes: scenesWithImages.length,
+        totalScenes: scenesWithVideo.length,
         videoClips: scenesWithVideo.length,
+        videoUrl: mainVideoUrl,
         totalDuration,
-        hasNarration: scenesWithImages.some(s => s.audioUrl),
+        hasNarration: scenesWithVideo.some(s => s.audioUrl),
         generationTimeSeconds: generationTimeSec,
         lovableAnimation: lovableAnimationData
       }),
