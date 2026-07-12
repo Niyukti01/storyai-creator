@@ -483,26 +483,26 @@ const StoryboardPreview = () => {
     if (!project || !id) return;
 
     setGeneratingVideo(true);
-    toast.loading("Starting animation generation...", { id: "video-generation" });
+    toast.loading("Starting Runway video generation...", { id: "video-generation" });
 
     try {
-      const { data, error } = await supabase.functions.invoke("generate-video", {
+      const { data, error } = await supabase.functions.invoke("generate-lovable-animation", {
         body: { projectId: id },
       });
 
       if (error) throw error;
 
-      if (data?.success) {
-        toast.success("Animation generated successfully!", { id: "video-generation" });
+      if (data?.success && data?.videoUrl?.includes(".mp4")) {
+        toast.success("Runway MP4 generated successfully!", { id: "video-generation" });
         await loadProject();
-      } else if (data?.error === 'Generation cancelled by user') {
+      } else if (data?.error === 'Generation cancelled by user' || data?.error === 'Cancelled') {
         toast.info("Generation cancelled", { id: "video-generation" });
       } else {
-        throw new Error("Video generation failed");
+        throw new Error(data?.error || "Runway did not return a playable MP4 video");
       }
     } catch (error: any) {
-      console.error("Error generating video:", error);
-      toast.error(error.message || "Failed to generate animation", { 
+      console.error("Runway video generation failed:", error);
+      toast.error(error.message || "Runway video generation failed. Please retry.", { 
         id: "video-generation" 
       });
     } finally {
@@ -838,24 +838,28 @@ const StoryboardPreview = () => {
             <Film className="h-12 w-12 text-primary mx-auto" />
             <div>
               <h3 className="text-xl font-bold mb-2">
-                {project.video_status === 'generating' 
+                {project.video_status === 'generating_lovable' 
                   ? "Generating Your Animation..."
-                  : project.video_url 
+                  : project.video_status === 'failed'
+                  ? "Runway Generation Failed"
+                  : project.video_url?.includes('.mp4') 
                   ? "Animation Generated!" 
                   : "Ready to Generate Your Animation?"}
               </h3>
               <p className="text-muted-foreground">
-                {project.video_status === 'generating'
-                  ? "Please wait while we create your animated movie"
-                  : project.video_url 
-                  ? "Your animated short movie is ready to view"
+                {project.video_status === 'generating_lovable'
+                  ? "Please wait while Runway creates every animated scene"
+                  : project.video_status === 'failed'
+                  ? "No static fallback was generated. Retry to create a Runway MP4."
+                  : project.video_url?.includes('.mp4') 
+                  ? "Your Runway-generated MP4 is ready to view"
                   : "Review your storyboard and proceed to generate the final animated video"
                 }
               </p>
             </div>
 
             {/* Progress Tracking */}
-            {project.video_status === 'generating' && (
+            {project.video_status === 'generating_lovable' && (
               <div className="space-y-3 max-w-md mx-auto">
                 <Progress value={project.video_progress || 0} className="h-3" />
                 <div className="flex items-center justify-between text-sm">
@@ -880,7 +884,7 @@ const StoryboardPreview = () => {
               </div>
             )}
             
-            {project.video_url && project.video_status !== 'generating' ? (
+            {project.video_url?.includes('.mp4') && project.video_status !== 'generating_lovable' && project.video_status !== 'failed' ? (
               <div className="space-y-3">
                 <video 
                   controls 
@@ -911,10 +915,10 @@ const StoryboardPreview = () => {
                 size="lg" 
                 className="gap-2"
                 onClick={generateVideo}
-                disabled={generatingVideo || project.video_status === 'generating'}
+                disabled={generatingVideo || project.video_status === 'generating_lovable'}
               >
-                <Sparkles className="h-5 w-5" />
-                {generatingVideo ? "Starting..." : "Generate Animation"}
+                {project.video_status === 'failed' ? <XCircle className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
+                {generatingVideo ? "Starting..." : project.video_status === 'failed' ? "Retry Runway Video" : "Generate Runway MP4"}
               </Button>
             ) : null}
           </CardContent>
