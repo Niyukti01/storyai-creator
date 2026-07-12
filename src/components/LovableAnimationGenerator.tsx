@@ -263,7 +263,7 @@ export const LovableAnimationGenerator = ({
   };
 
   const togglePlay = () => {
-    if (!isPlaying && currentSceneIndex >= scenes.length - 1) {
+    if (!isPlaying && currentSceneIndex >= validVideoScenes.length - 1) {
       setCurrentSceneIndex(0);
     }
     if (!currentHasVideo) {
@@ -372,7 +372,7 @@ export const LovableAnimationGenerator = ({
         ? { phase: "Starting…", icon: "🎬" }
         : progress < 25
         ? { phase: "Phase 1 — Sending scenes to Runway", icon: "🎥" }
-        : progress < 75
+        : progress < 70
         ? { phase: "Phase 2 — Polling Runway video jobs", icon: "🎞️" }
         : progress < 75
         ? { phase: "Phase 3 — Downloading completed MP4 clips", icon: "📥" }
@@ -609,7 +609,7 @@ export const LovableAnimationGenerator = ({
               >
                 {isPlaying ? <Pause className="h-5 w-5 text-white" /> : <Play className="h-5 w-5 text-white ml-0.5" />}
               </Button>
-              <Button variant="ghost" size="icon" title="Next scene" onClick={goToNextScene} disabled={currentSceneIndex === scenes.length - 1}>
+              <Button variant="ghost" size="icon" title="Next scene" onClick={goToNextScene} disabled={currentSceneIndex === validVideoScenes.length - 1}>
                 <SkipForward className="h-4 w-4" />
               </Button>
 
@@ -688,7 +688,7 @@ export const LovableAnimationGenerator = ({
             <div>
               <p className="text-muted-foreground">Narration</p>
               <p className="font-bold text-lg text-green-600">
-                {scenes.filter((s) => s.audioUrl).length}/{scenes.length}
+                {validVideoScenes.filter((s) => s.audioUrl).length}/{validVideoScenes.length}
               </p>
             </div>
           </div>
