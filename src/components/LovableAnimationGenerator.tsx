@@ -29,7 +29,6 @@ import {
 
 interface LovableScene {
   sceneNumber: number;
-  imageUrl: string;
   videoUrl?: string;
   narration: string;
   audioUrl?: string;
@@ -80,15 +79,19 @@ export const LovableAnimationGenerator = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const scenes = existingAnimation?.scenes || [];
-  const currentScene = scenes[currentSceneIndex];
+  const isValidMp4Scene = (scene: LovableScene) => !!(scene.hasVideo && scene.videoUrl && scene.videoUrl.includes(".mp4"));
+  const validVideoScenes = scenes.filter(isValidMp4Scene);
+  const currentScene = validVideoScenes[currentSceneIndex];
   const isLovableGenerating = videoStatus === "generating_lovable";
-  const isCompleted = videoStatus === "lovable_completed" && scenes.length > 0;
+  const allScenesHaveRunwayMp4 = scenes.length > 0 && validVideoScenes.length === scenes.length;
+  const isCompleted = videoStatus === "lovable_completed" && allScenesHaveRunwayMp4;
+  const hasInvalidCompletedOutput = videoStatus === "lovable_completed" && scenes.length > 0 && !allScenesHaveRunwayMp4;
+  const isFailed = videoStatus === "failed" || hasInvalidCompletedOutput;
 
   // Does the current scene have a real video clip?
-  const currentHasVideo = !!(currentScene?.hasVideo && currentScene?.videoUrl && !currentScene.videoUrl.endsWith('.png'));
+  const currentHasVideo = !!(currentScene?.videoUrl && currentScene.videoUrl.includes(".mp4"));
 
   // Poll for progress updates during generation
   useEffect(() => {
@@ -115,24 +118,6 @@ export const LovableAnimationGenerator = ({
     }
   }, [isLovableGenerating, projectId, onVideoGenerated]);
 
-  // Auto-advance scenes when playing
-  useEffect(() => {
-    if (isPlaying && scenes.length > 0 && !currentHasVideo) {
-      // For image-only fallback scenes, auto-advance after duration
-      const sceneDuration = (currentScene?.duration || 5) * 1000;
-      intervalRef.current = setInterval(() => {
-        setCurrentSceneIndex((prev) => {
-          if (prev < scenes.length - 1) return prev + 1;
-          setIsPlaying(false);
-          return 0;
-        });
-      }, sceneDuration);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [isPlaying, currentSceneIndex, scenes.length, currentHasVideo]);
-
   // Handle video element for real video clips
   useEffect(() => {
     if (videoRef.current && currentHasVideo && currentScene?.videoUrl) {
@@ -154,13 +139,13 @@ export const LovableAnimationGenerator = ({
 
   // When video ends, advance to next scene
   const handleVideoEnded = useCallback(() => {
-    if (currentSceneIndex < scenes.length - 1) {
+    if (currentSceneIndex < validVideoScenes.length - 1) {
       setCurrentSceneIndex(prev => prev + 1);
     } else {
       setIsPlaying(false);
       setCurrentSceneIndex(0);
     }
-  }, [currentSceneIndex, scenes.length]);
+  }, [currentSceneIndex, validVideoScenes.length]);
 
   // Play narration audio when scene changes
   useEffect(() => {
@@ -197,22 +182,29 @@ export const LovableAnimationGenerator = ({
     }
     setGenerating(true);
     setLocalProgress(0);
+    setGenStatus(null);
 
     try {
-      const { error } = await supabase.functions.invoke("generate-lovable-animation", {
+      const { data, error } = await supabase.functions.invoke("generate-lovable-animation", {
         body: { projectId },
       });
       if (error) throw error;
-      toast.success("Generating your animated story video with AI...");
+      if (data?.error) throw new Error(data.error);
+      if (!data?.videoUrl || !data.videoUrl.includes(".mp4")) {
+        throw new Error("Runway did not return a playable MP4 video URL.");
+      }
+      toast.success("Runway video generated successfully.");
+      onVideoGenerated();
     } catch (error: any) {
       console.error("Animation error:", error);
-      toast.error(error.message || "Failed to start animation generation");
+      toast.error(error.message || "Runway video generation failed. Please retry.");
       setGenerating(false);
+      onVideoGenerated();
     }
   };
 
   const handleDownload = async () => {
-    const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
+    const videoScenes = validVideoScenes;
     if (videoScenes.length === 0) {
       toast.error("No video clips available for download");
       return;
@@ -233,7 +225,7 @@ export const LovableAnimationGenerator = ({
   };
 
   const handleDownloadAll = async () => {
-    const videoScenes = scenes.filter(s => s.hasVideo && s.videoUrl);
+    const videoScenes = validVideoScenes;
     if (videoScenes.length === 0) {
       toast.error("No video clips available for download");
       return;
@@ -274,6 +266,10 @@ export const LovableAnimationGenerator = ({
     if (!isPlaying && currentSceneIndex >= scenes.length - 1) {
       setCurrentSceneIndex(0);
     }
+    if (!currentHasVideo) {
+      toast.error("No playable Runway MP4 is available. Please regenerate the video.");
+      return;
+    }
     setIsPlaying(!isPlaying);
   };
 
@@ -283,7 +279,7 @@ export const LovableAnimationGenerator = ({
   };
 
   const goToNextScene = () => {
-    setCurrentSceneIndex((prev) => Math.min(scenes.length - 1, prev + 1));
+    setCurrentSceneIndex((prev) => Math.min(validVideoScenes.length - 1, prev + 1));
     setCurrentTime(0);
   };
 
@@ -293,14 +289,14 @@ export const LovableAnimationGenerator = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const getTotalDuration = () => scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
+  const getTotalDuration = () => validVideoScenes.reduce((sum, s) => sum + (s.duration || 5), 0);
 
   const getCurrentOverallTime = () => {
-    const prev = scenes.slice(0, currentSceneIndex).reduce((s, sc) => s + (sc.duration || 5), 0);
+    const prev = validVideoScenes.slice(0, currentSceneIndex).reduce((s, sc) => s + (sc.duration || 5), 0);
     return prev + currentTime;
   };
 
-  const videoClipCount = scenes.filter(s => s.hasVideo).length;
+  const videoClipCount = validVideoScenes.length;
 
   // ─── Generate Button ──────────────────────────────────────
   if (!isCompleted && !isLovableGenerating && !generating) {
@@ -333,8 +329,8 @@ export const LovableAnimationGenerator = ({
           <div className="bg-pink-100/50 dark:bg-pink-950/30 rounded-lg p-4 space-y-2">
             <p className="text-sm font-medium text-pink-700 dark:text-pink-300">Animation Pipeline:</p>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>• AI generates scene illustrations (Pixar-quality)</li>
-              <li>• Each scene animated as a 5-second video clip (Runway ML)</li>
+              <li>• Story scenes are sent directly to Runway video generation</li>
+              <li>• Every scene must complete as a 5-second MP4 clip</li>
               <li>• Characters move, gesture, and interact naturally</li>
               <li>• Voice narration synced to each scene (ElevenLabs)</li>
             </ul>
@@ -374,15 +370,15 @@ export const LovableAnimationGenerator = ({
     const phaseInfo =
       progress < 5
         ? { phase: "Starting…", icon: "🎬" }
-        : progress < 30
-        ? { phase: "Phase 1 — Painting scene illustrations", icon: "🎨" }
-        : progress < 40
-        ? { phase: "Phase 2 — Starting AI video generation", icon: "🎥" }
+        : progress < 25
+        ? { phase: "Phase 1 — Sending scenes to Runway", icon: "🎥" }
         : progress < 75
-        ? { phase: "Phase 3 — Rendering animated video clips (Runway ML)", icon: "🎞️" }
+        ? { phase: "Phase 2 — Polling Runway video jobs", icon: "🎞️" }
+        : progress < 75
+        ? { phase: "Phase 3 — Downloading completed MP4 clips", icon: "📥" }
         : progress < 90
         ? { phase: "Phase 4 — Recording voice narration", icon: "🎙️" }
-        : { phase: "Phase 5 — Finalizing your video", icon: "✅" };
+        : { phase: "Phase 5 — Final MP4 verification", icon: "✅" };
 
     return (
       <Card className="shadow-[var(--shadow-medium)] border-2 border-pink-200/50">
@@ -434,19 +430,19 @@ export const LovableAnimationGenerator = ({
             <p className="font-medium mb-2">Pipeline stages:</p>
             <ul className="space-y-1">
               <li className={progress >= 3 ? "text-green-600" : ""}>
-                {progress >= 30 ? "✓" : progress >= 3 ? "⟳" : "○"} Generating scene illustrations
+                {progress >= 10 ? "✓" : progress >= 3 ? "⟳" : "○"} Story created and scenes extracted
               </li>
-              <li className={progress >= 32 ? "text-green-600" : ""}>
-                {progress >= 40 ? "✓" : progress >= 32 ? "⟳" : "○"} Starting Runway AI video tasks
+              <li className={progress >= 10 ? "text-green-600" : ""}>
+                {progress >= 25 ? "✓" : progress >= 10 ? "⟳" : "○"} Sending every scene to Runway
               </li>
-              <li className={progress >= 40 ? "text-green-600" : ""}>
-                {progress >= 75 ? "✓" : progress >= 40 ? "⟳" : "○"} Rendering animated video clips
+              <li className={progress >= 25 ? "text-green-600" : ""}>
+                {progress >= 75 ? "✓" : progress >= 25 ? "⟳" : "○"} Polling until Runway jobs complete
               </li>
               <li className={progress >= 77 ? "text-green-600" : ""}>
                 {progress >= 90 ? "✓" : progress >= 77 ? "⟳" : "○"} Recording voice narration
               </li>
               <li className={progress >= 92 ? "text-green-600" : ""}>
-                {progress >= 100 ? "✓" : progress >= 92 ? "⟳" : "○"} Saving &amp; finalizing
+                {progress >= 100 ? "✓" : progress >= 92 ? "⟳" : "○"} Verifying playable MP4 output
               </li>
             </ul>
           </div>
@@ -465,8 +461,35 @@ export const LovableAnimationGenerator = ({
     );
   }
 
+  if (isFailed) {
+    return (
+      <Card className="shadow-[var(--shadow-medium)] border-2 border-destructive/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Film className="w-6 h-6 text-destructive" />
+            Runway Video Generation Failed
+          </CardTitle>
+          <CardDescription>
+            No static image or slideshow was generated. Retry to create a playable Runway MP4.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+            {hasInvalidCompletedOutput
+              ? "The previous output was not a valid MP4 video for every scene, so it was blocked."
+              : genStatus?.phase || "Runway returned an error before a valid MP4 video was produced."}
+          </div>
+          <Button onClick={generateLovableAnimation} disabled={generating} className="w-full" size="lg">
+            {generating ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <RefreshCw className="w-5 h-5 mr-2" />}
+            Retry Runway Video Generation
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   // ─── Completed Player ─────────────────────────────────────
-  if (isCompleted && scenes.length > 0) {
+  if (isCompleted && validVideoScenes.length > 0) {
     return (
       <Card className="shadow-[var(--shadow-medium)] border-2 border-pink-200/50 overflow-hidden">
         <CardHeader className="pb-2">
@@ -503,18 +526,16 @@ export const LovableAnimationGenerator = ({
                     muted={isMuted}
                   />
                 ) : (
-                  <img
-                    src={currentScene.imageUrl}
-                    alt={`Scene ${currentScene.sceneNumber}`}
-                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-                  />
+                  <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-muted-foreground">
+                    Runway MP4 verification failed for this scene. Please regenerate.
+                  </div>
                 )}
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent pointer-events-none" />
 
                 <div className="absolute top-3 left-3">
                   <Badge className="bg-pink-500/80 text-white backdrop-blur-sm text-xs">
-                    {currentHasVideo ? "🎥" : "🖼️"} Scene {currentScene.sceneNumber}
+                    🎥 Scene {currentScene.sceneNumber}
                     {currentScene.setting ? ` — ${currentScene.setting}` : ""}
                   </Badge>
                 </div>
@@ -553,7 +574,7 @@ export const LovableAnimationGenerator = ({
 
           {/* Scene strip */}
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {scenes.map((scene, idx) => (
+            {validVideoScenes.map((scene, idx) => (
               <button
                 key={idx}
                 onClick={() => { setCurrentSceneIndex(idx); setCurrentTime(0); }}
@@ -563,13 +584,9 @@ export const LovableAnimationGenerator = ({
                     : "border-transparent opacity-70 hover:opacity-100"
                 }`}
               >
-                <img
-                  src={scene.imageUrl}
-                  alt={`Scene ${scene.sceneNumber}`}
-                  className="w-full h-full object-cover"
-                />
+                <video src={scene.videoUrl} className="w-full h-full object-cover" muted preload="metadata" />
                 <span className="absolute bottom-0 left-0 right-0 text-center text-white text-[10px] bg-black/50 py-0.5">
-                  {scene.hasVideo ? "🎥" : "🖼️"} {idx + 1}
+                  🎥 {idx + 1}
                 </span>
               </button>
             ))}
@@ -662,7 +679,7 @@ export const LovableAnimationGenerator = ({
             </div>
             <div>
               <p className="text-muted-foreground">Scenes</p>
-              <p className="font-bold text-lg">{scenes.length}</p>
+              <p className="font-bold text-lg">{validVideoScenes.length}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Video Clips</p>
