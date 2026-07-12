@@ -12,7 +12,6 @@ const RUNWAY_VERSION = '2024-11-06'
 
 interface SceneData {
   sceneNumber: number
-  imageUrl: string | null
   videoUrl: string | null
   narration: string
   audioUrl: string | null
@@ -31,119 +30,6 @@ function optimizeScenes(scenes: any[], max: number): any[] {
   const step = scenes.length / max
   return Array.from({ length: max }, (_, i) => scenes[Math.min(Math.floor(i * step), scenes.length - 1)])
     .map((s, i) => ({ ...s, scene_number: i + 1 }))
-}
-
-// Generate a scene illustration using Lovable AI (Gemini image model)
-async function generateSceneImage(
-  scene: any,
-  characters: any[],
-  genre: string,
-  apiKey: string,
-  retries = 2
-): Promise<{ base64: string | null; url: string | null }> {
-  const sceneCharacters = scene.dialogue?.map((d: any) => d.character) || []
-  const characterDetails = characters
-    .filter((c: any) => sceneCharacters.includes(c.name))
-    .map((c: any) => `${c.name}: ${c.description}`)
-    .join('. ')
-
-  const prompt = `Cinematic 3D animated scene, Pixar-quality rendering with dramatic lighting and depth. Style: soft 3D animation, volumetric lighting, cinematic color grading, depth of field, warm pastel tones, rounded expressive characters with big eyes, rich detailed environment with foreground/midground/background layers. Setting: ${scene.setting}. Action: ${scene.action || scene.description}. ${characterDetails ? `Characters: ${characterDetails}.` : ''} Genre: ${genre}. Wide 16:9 cinematic composition, dramatic camera angle, cozy magical atmosphere.`
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-pro-image-preview',
-          messages: [{ role: 'user', content: prompt }],
-          modalities: ['image', 'text']
-        }),
-      })
-
-      if (response.status === 503 && attempt < retries) {
-        console.log(`Image gen 503 for scene ${scene.scene_number}, retrying in 5s...`)
-        await new Promise(r => setTimeout(r, 5000))
-        continue
-      }
-
-      if (!response.ok) {
-        const errText = await response.text()
-        console.error(`Image gen failed for scene ${scene.scene_number}: ${response.status} ${errText}`)
-        return { base64: null, url: null }
-      }
-
-      const data = await response.json()
-
-      // Try multiple response shapes
-      const parts = data.choices?.[0]?.message?.content
-      if (Array.isArray(parts)) {
-        for (const part of parts) {
-          if (part.type === 'image_url' && part.image_url?.url) {
-            const url = part.image_url.url
-            if (url.startsWith('data:')) {
-              return { base64: url.split(',')[1], url }
-            }
-            return { base64: null, url }
-          }
-          if (part.inlineData?.data) {
-            return { base64: part.inlineData.data, url: `data:image/png;base64,${part.inlineData.data}` }
-          }
-        }
-      }
-
-      const imgUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
-        || data.choices?.[0]?.message?.image_url?.url
-      if (imgUrl) {
-        if (imgUrl.startsWith('data:')) {
-          return { base64: imgUrl.split(',')[1], url: imgUrl }
-        }
-        return { base64: null, url: imgUrl }
-      }
-
-      console.error(`No image found in response for scene ${scene.scene_number}`)
-      return { base64: null, url: null }
-    } catch (error) {
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, 3000))
-        continue
-      }
-      console.error(`Image generation exception for scene ${scene.scene_number}:`, error)
-      return { base64: null, url: null }
-    }
-  }
-  return { base64: null, url: null }
-}
-
-// Upload base64 image to storage & return public URL
-async function uploadImageToStorage(
-  base64Data: string,
-  supabase: any,
-  projectId: string,
-  sceneNumber: number
-): Promise<string | null> {
-  try {
-    const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
-    const fileName = `${projectId}/scene-${sceneNumber}-${Date.now()}.png`
-
-    const { error } = await supabase.storage
-      .from('generated-videos')
-      .upload(fileName, binaryData, { contentType: 'image/png', upsert: true })
-
-    if (error) {
-      console.error(`Image upload error for scene ${sceneNumber}:`, error)
-      return null
-    }
-
-    const { data } = supabase.storage.from('generated-videos').getPublicUrl(fileName)
-    return data.publicUrl
-  } catch (err) {
-    console.error(`Image upload exception for scene ${sceneNumber}:`, err)
-    return null
-  }
 }
 
 // Motion presets: curated camera + character action combos for different scene types
