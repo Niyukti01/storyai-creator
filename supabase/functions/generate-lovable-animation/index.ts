@@ -527,17 +527,18 @@ serve(async (req) => {
     scenes = optimizeScenes(scenes, MAX_SCENES)
     console.log(`Processing ${scenes.length} scenes`)
 
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')
     const ELEVENLABS_API_KEY = Deno.env.get('ELEVENLABS_API_KEY')
     const RUNWAY_API_KEY = Deno.env.get('RUNWAY_API_KEY')
 
-    if (!LOVABLE_API_KEY) throw new Error('LOVABLE_API_KEY is not configured')
     if (!RUNWAY_API_KEY) throw new Error('RUNWAY_API_KEY is not configured')
 
     const sceneDataList: SceneData[] = []
 
-    // ============ PHASE 1: Generate scene images (0-30%) ============
-    console.log('=== PHASE 1: Generating scene images ===')
+    console.log('Story created')
+    console.log(`Scenes extracted: ${scenes.length}`)
+
+    // ============ PHASE 1: Prepare Runway scene prompts (0-10%) ============
+    console.log('=== PHASE 1: Preparing Runway video scenes ===')
 
     for (let i = 0; i < scenes.length; i++) {
       // Check cancellation
@@ -551,33 +552,11 @@ serve(async (req) => {
       }
 
       const scene = scenes[i]
-      const { base64, url } = await generateSceneImage(scene, characters, project.genre, LOVABLE_API_KEY)
-
-      let storedUrl: string | null = null
-      
-      // Always upload to storage so we get a public URL (Runway needs public URLs, not data URIs)
-      if (base64) {
-        storedUrl = await uploadImageToStorage(base64, supabase, projectId, scene.scene_number)
-      } else if (url && url.startsWith('data:')) {
-        // Extract base64 from data URL and upload
-        const b64 = url.split(',')[1]
-        if (b64) {
-          storedUrl = await uploadImageToStorage(b64, supabase, projectId, scene.scene_number)
-        }
-      } else if (url) {
-        storedUrl = url
-      }
-      
-      if (!storedUrl) {
-        console.error(`Scene ${scene.scene_number}: No usable image URL generated`)
-      }
-
       const dialogueText = scene.dialogue?.map((d: any) => `${d.character}: "${d.line}"`).join(' ') || ''
       const narration = shortenNarration(`${scene.description}. ${dialogueText}`.trim(), 50)
 
       sceneDataList.push({
         sceneNumber: scene.scene_number,
-        imageUrl: storedUrl || null,
         videoUrl: null,
         narration,
         audioUrl: null,
@@ -585,79 +564,90 @@ serve(async (req) => {
         setting: scene.setting || ''
       })
 
-      const imgProgress = 3 + Math.floor(((i + 1) / scenes.length) * 27)
+      const prepProgress = 3 + Math.floor(((i + 1) / scenes.length) * 7)
       await updateGenerationStatus(supabase, projectId, project.avatar, {
-        phase: `Painting scene ${i + 1} of ${scenes.length}`,
+        phase: `Preparing Runway scene ${i + 1} of ${scenes.length}`,
         currentScene: i + 1,
         totalScenes: scenes.length,
         startedAt: startTime,
-        progress: imgProgress,
+        progress: prepProgress,
       })
-      console.log(`Image ${i + 1}/${scenes.length} done. Progress: ${imgProgress}%`)
+      console.log(`Runway scene ${i + 1}/${scenes.length} prepared. Progress: ${prepProgress}%`)
     }
 
-    const scenesWithImages = sceneDataList.filter(s => s.imageUrl)
-    console.log(`${scenesWithImages.length}/${scenes.length} images generated`)
-
-    // ============ PHASE 2: Start Runway video tasks (30-40%) ============
+    // ============ PHASE 2: Start Runway video tasks (10-25%) ============
     console.log('=== PHASE 2: Starting Runway video generation tasks ===')
-    await supabase.from('projects').update({ video_progress: 32 }).eq('id', projectId)
+    await updateGenerationStatus(supabase, projectId, project.avatar, {
+      phase: 'Sending scenes to Runway video generation',
+      currentScene: 1,
+      totalScenes: scenes.length,
+      startedAt: startTime,
+      progress: 10,
+    })
 
-    const taskMap: { sceneNumber: number; taskId: string | null; imageUrl: string }[] = []
+    const taskMap: { sceneNumber: number; taskId: string }[] = []
 
-    for (const scene of scenesWithImages) {
-      if (!scene.imageUrl) continue
-      const fullScene = scenes.find((s: any) => s.scene_number === scene.sceneNumber) || {}
-      const taskId = await startRunwayVideoTask(scene.imageUrl, fullScene, characters, RUNWAY_API_KEY)
-      taskMap.push({ sceneNumber: scene.sceneNumber, taskId, imageUrl: scene.imageUrl! })
+    for (let i = 0; i < scenes.length; i++) {
+      const fullScene = scenes[i]
+      const taskId = await startRunwayVideoTask(fullScene, characters, RUNWAY_API_KEY)
+      taskMap.push({ sceneNumber: fullScene.scene_number, taskId })
+
+      const requestProgress = 10 + Math.floor(((i + 1) / scenes.length) * 15)
+      await updateGenerationStatus(supabase, projectId, project.avatar, {
+        phase: `Runway request sent for scene ${i + 1} of ${scenes.length}`,
+        currentScene: i + 1,
+        totalScenes: scenes.length,
+        startedAt: startTime,
+        progress: requestProgress,
+      })
 
       // Small delay between task starts to avoid rate limits
       await new Promise(r => setTimeout(r, 1500))
     }
 
-    const activeTasks = taskMap.filter(t => t.taskId)
-    console.log(`${activeTasks.length} Runway tasks started`)
-    await supabase.from('projects').update({ video_progress: 40 }).eq('id', projectId)
+    if (taskMap.length !== scenes.length) {
+      throw new Error(`Runway did not start every scene: ${taskMap.length}/${scenes.length} jobs started`)
+    }
+    console.log(`${taskMap.length} Runway tasks started`)
+    await supabase.from('projects').update({ video_progress: 25 }).eq('id', projectId)
 
-    // ============ PHASE 3: Poll Runway tasks until complete (40-75%) ============
+    // ============ PHASE 3: Poll Runway tasks until complete (25-75%) ============
     console.log('=== PHASE 3: Polling Runway tasks for completion ===')
 
-    for (let i = 0; i < activeTasks.length; i++) {
-      const task = activeTasks[i]
-      const videoUrl = await pollRunwayTask(task.taskId!, RUNWAY_API_KEY)
-
-      if (videoUrl) {
-        // Download and upload to our storage
-        const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
-        const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
-        if (sceneData) {
-          sceneData.videoUrl = storedVideoUrl || videoUrl
-        }
-        console.log(`Scene ${task.sceneNumber} video ready: ${storedVideoUrl ? 'stored' : 'direct URL'}`)
-      } else {
-        console.log(`Scene ${task.sceneNumber} video failed — will use image fallback`)
+    for (let i = 0; i < taskMap.length; i++) {
+      const task = taskMap[i]
+      const videoUrl = await pollRunwayTask(task.taskId, RUNWAY_API_KEY)
+      const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
+      const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
+      if (!sceneData) {
+        throw new Error(`Internal scene data missing for scene ${task.sceneNumber}`)
       }
+      sceneData.videoUrl = storedVideoUrl
+      console.log(`Scene ${task.sceneNumber} video ready: stored MP4`)
 
-      const videoProgress = 40 + Math.floor(((i + 1) / activeTasks.length) * 35)
+      const videoProgress = 25 + Math.floor(((i + 1) / taskMap.length) * 50)
       await updateGenerationStatus(supabase, projectId, project.avatar, {
-        phase: `Animating scene ${i + 1} of ${activeTasks.length} (Runway)`,
+        phase: `Runway scene ${i + 1} of ${taskMap.length} completed`,
         currentScene: i + 1,
-        totalScenes: activeTasks.length,
+        totalScenes: taskMap.length,
         startedAt: startTime,
         progress: videoProgress,
       })
     }
 
-    const scenesWithVideo = sceneDataList.filter(s => s.videoUrl)
-    console.log(`${scenesWithVideo.length}/${scenesWithImages.length} video clips generated`)
+    const scenesWithVideo = sceneDataList.filter(s => s.videoUrl && s.videoUrl.includes('.mp4'))
+    console.log(`${scenesWithVideo.length}/${scenes.length} video clips generated`)
+    if (scenesWithVideo.length !== scenes.length) {
+      throw new Error(`Runway video generation incomplete: ${scenesWithVideo.length}/${scenes.length} MP4 clips created`)
+    }
 
     // ============ PHASE 4: Narration Audio via ElevenLabs (75-90%) ============
     console.log('=== PHASE 4: Generating narration audio ===')
     await supabase.from('projects').update({ video_progress: 77 }).eq('id', projectId)
 
-    if (ELEVENLABS_API_KEY && scenesWithImages.length > 0) {
-      for (let i = 0; i < scenesWithImages.length; i++) {
-        const scene = scenesWithImages[i]
+    if (ELEVENLABS_API_KEY && scenesWithVideo.length > 0) {
+      for (let i = 0; i < scenesWithVideo.length; i++) {
+        const scene = scenesWithVideo[i]
         const audioUrl = await generateNarrationAudio(
           scene.narration, ELEVENLABS_API_KEY, supabase, projectId, scene.sceneNumber
         )
@@ -669,42 +659,46 @@ serve(async (req) => {
           break
         }
 
-        const audioProgress = 77 + Math.floor(((i + 1) / scenesWithImages.length) * 13)
+        const audioProgress = 77 + Math.floor(((i + 1) / scenesWithVideo.length) * 13)
         await updateGenerationStatus(supabase, projectId, project.avatar, {
-          phase: `Recording narration ${i + 1} of ${scenesWithImages.length}`,
+          phase: `Recording narration ${i + 1} of ${scenesWithVideo.length}`,
           currentScene: i + 1,
-          totalScenes: scenesWithImages.length,
+          totalScenes: scenesWithVideo.length,
           startedAt: startTime,
           progress: audioProgress,
         })
       }
     } else {
-      console.log('Skipping audio: no ElevenLabs key or no images')
+      console.log('Skipping audio: no ElevenLabs key or no completed Runway videos')
     }
 
     // ============ PHASE 5: Save animation data (90-100%) ============
     console.log('=== PHASE 5: Saving animation data ===')
     await supabase.from('projects').update({ video_progress: 92 }).eq('id', projectId)
 
-    const totalDuration = scenesWithImages.reduce((s, sc) => s + sc.duration, 0)
+    const totalDuration = scenesWithVideo.reduce((s, sc) => s + sc.duration, 0)
     const generationTimeSec = Math.round((Date.now() - startTime) / 1000)
+    const mainVideoUrl = scenesWithVideo[0]?.videoUrl || null
+    if (!mainVideoUrl || !mainVideoUrl.includes('.mp4')) {
+      throw new Error('Final MP4 verification failed: no valid Runway MP4 video URL was produced')
+    }
 
     const lovableAnimationData = {
       type: 'lovable_animation',
-      scenes: scenesWithImages.map(s => ({
+      scenes: scenesWithVideo.map(s => ({
         sceneNumber: s.sceneNumber,
-        imageUrl: s.imageUrl,
-        videoUrl: s.videoUrl || s.imageUrl, // fallback to image if no video
+        videoUrl: s.videoUrl,
         narration: s.narration,
         audioUrl: s.audioUrl,
         duration: s.duration,
         setting: s.setting,
-        hasVideo: !!s.videoUrl,
+        hasVideo: true,
       })),
       totalDuration,
-      totalScenes: scenesWithImages.length,
+      totalScenes: scenesWithVideo.length,
       videosGenerated: scenesWithVideo.length,
-      isFullAnimation: scenesWithVideo.length > 0,
+      isFullAnimation: scenesWithVideo.length === scenes.length,
+      finalVideoUrl: mainVideoUrl,
       generatedAt: new Date().toISOString(),
       generationTimeSeconds: generationTimeSec,
       settings: { maxScenes: MAX_SCENES, resolution: '720p', fps: 24 }
@@ -716,9 +710,9 @@ serve(async (req) => {
     }).eq('id', projectId)
 
     await supabase.from('projects').update({ video_progress: 96 }).eq('id', projectId)
+    console.log(`Final MP4 rendered: verified Runway MP4 URL ${mainVideoUrl.substring(0, 120)}`)
 
     // Create video version record
-    const mainVideoUrl = scenesWithVideo[0]?.videoUrl || scenesWithImages[0]?.imageUrl || null
     if (mainVideoUrl) {
       const { data: existingVersions } = await supabase
         .from('video_versions')
@@ -737,15 +731,16 @@ serve(async (req) => {
         duration_seconds: totalDuration,
         metadata: {
           type: 'lovable_animation',
-          scenes_count: scenesWithImages.length,
+            scenes_count: scenesWithVideo.length,
           video_clips: scenesWithVideo.length,
-          has_narration: scenesWithImages.some(s => s.audioUrl),
+            has_narration: scenesWithVideo.some(s => s.audioUrl),
           generation_time_seconds: generationTimeSec
         }
       })
     }
 
     await supabase.from('projects').update({
+      video_url: mainVideoUrl,
       video_status: 'lovable_completed',
       video_progress: 100,
       video_generated_at: new Date().toISOString(),
@@ -756,10 +751,11 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        totalScenes: scenesWithImages.length,
+        totalScenes: scenesWithVideo.length,
         videoClips: scenesWithVideo.length,
+        videoUrl: mainVideoUrl,
         totalDuration,
-        hasNarration: scenesWithImages.some(s => s.audioUrl),
+        hasNarration: scenesWithVideo.some(s => s.audioUrl),
         generationTimeSeconds: generationTimeSec,
         lovableAnimation: lovableAnimationData
       }),
