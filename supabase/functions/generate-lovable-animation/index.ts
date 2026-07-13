@@ -683,13 +683,14 @@ serve(async (req) => {
     for (let i = 0; i < taskMap.length; i++) {
       const task = taskMap[i]
       const videoUrl = await pollRunwayTask(task.taskId, RUNWAY_API_KEY)
-      const storedVideoUrl = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
+      const { url: storedVideoUrl, durationSec } = await uploadVideoToStorage(videoUrl, supabase, projectId, task.sceneNumber)
       const sceneData = sceneDataList.find(s => s.sceneNumber === task.sceneNumber)
       if (!sceneData) {
         throw new Error(`Internal scene data missing for scene ${task.sceneNumber}`)
       }
       sceneData.videoUrl = storedVideoUrl
-      console.log(`Scene ${task.sceneNumber} video ready: stored MP4`)
+      sceneData.duration = durationSec
+      console.log(`Scene ${task.sceneNumber} video ready: verified MP4 (${durationSec.toFixed(2)}s)`)
 
       const videoProgress = 25 + Math.floor(((i + 1) / taskMap.length) * 50)
       await updateGenerationStatus(supabase, projectId, project.avatar, {
