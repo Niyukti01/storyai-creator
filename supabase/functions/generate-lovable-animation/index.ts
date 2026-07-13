@@ -275,15 +275,6 @@ function validateRunwayPrompt(prompt: string, sceneNumber: number): string {
   return prompt
 }
 
-function isFailureStatus(status: string | undefined): boolean {
-  const normalized = (status || '').toUpperCase()
-  return normalized === 'FAILED' || normalized === 'TIMEOUT' || normalized === 'TIMED_OUT' || normalized === 'ERROR' || normalized === 'CANCELLED'
-}
-
-function isSuccessStatus(status: string | undefined): boolean {
-  const normalized = (status || '').toUpperCase()
-  return normalized === 'SUCCEEDED' || normalized === 'COMPLETED'
-}
 
 // Start a Runway text-to-video task. No image endpoint or image fallback is used.
 async function startRunwayVideoTask(
