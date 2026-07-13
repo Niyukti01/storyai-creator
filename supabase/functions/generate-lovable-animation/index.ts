@@ -746,7 +746,7 @@ serve(async (req) => {
       video_generated_at: new Date().toISOString(),
     }).eq('id', projectId)
 
-    console.log(`=== COMPLETED in ${generationTimeSec}s. Video clips: ${scenesWithVideo.length}, Audio: ${scenesWithImages.filter(s => s.audioUrl).length} ===`)
+    console.log(`=== COMPLETED in ${generationTimeSec}s. Video clips: ${scenesWithVideo.length}, Audio: ${scenesWithVideo.filter(s => s.audioUrl).length} ===`)
 
     return new Response(
       JSON.stringify({
