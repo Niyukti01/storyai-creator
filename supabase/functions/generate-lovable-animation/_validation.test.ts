@@ -40,7 +40,7 @@ function buildMp4(timescale: number, duration: number): ArrayBuffer {
   const ftyp = box("ftyp", new TextEncoder().encode("isom\x00\x00\x02\x00mp42isom"));
   const mvhd = box("mvhd", mvhdV0(timescale, duration));
   const moov = box("moov", mvhd);
-  return concat(ftyp, moov).buffer;
+  return concat(ftyp, moov).buffer as ArrayBuffer;
 }
 
 // --- validateMp4Buffer tests --------------------------------------------
