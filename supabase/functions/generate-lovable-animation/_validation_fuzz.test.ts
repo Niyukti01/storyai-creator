@@ -158,7 +158,7 @@ Deno.test("fuzz: validateMp4Buffer rejects random buffers without crashing", () 
   const rng = mulberry32(7);
   let rejected = 0;
   for (let i = 0; i < 200; i++) {
-    const buf = randomBytes(rng, Math.floor(rng() * 512) + 8).buffer;
+    const buf = randomBytes(rng, Math.floor(rng() * 512) + 8).buffer as ArrayBuffer;
     try {
       validateMp4Buffer(buf, "video/mp4", i);
     } catch {
@@ -174,7 +174,7 @@ Deno.test("fuzz: validateMp4Buffer with ftyp signature but garbage moov → reje
   for (let i = 0; i < 50; i++) {
     const ftyp = box("ftyp", new TextEncoder().encode("isom\x00\x00\x02\x00mp42isom"));
     const junk = randomBytes(rng, 256);
-    const buf = concat(ftyp, junk).buffer;
+    const buf = concat(ftyp, junk).buffer as ArrayBuffer;
     let threw = false;
     try { validateMp4Buffer(buf, "video/mp4", i); } catch { threw = true; }
     assert(threw, `expected rejection for ftyp+garbage iter ${i}`);
