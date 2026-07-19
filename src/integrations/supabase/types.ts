@@ -317,7 +317,35 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      get_shared_video_chapters: {
+        Args: { _share_token: string }
+        Returns: {
+          created_at: string
+          end_seconds: number
+          id: string
+          project_id: string
+          scene_number: number
+          start_seconds: number
+          thumbnail_url: string
+          title: string
+          video_version_id: string
+        }[]
+      }
+      get_shared_video_versions: {
+        Args: { _share_token: string }
+        Returns: {
+          created_at: string
+          duration_seconds: number
+          file_size_bytes: number
+          id: string
+          metadata: Json
+          project_id: string
+          status: string
+          thumbnail_url: string
+          version_number: number
+          video_url: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
