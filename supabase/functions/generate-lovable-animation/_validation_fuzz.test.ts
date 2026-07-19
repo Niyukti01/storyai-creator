@@ -131,9 +131,9 @@ Deno.test("fuzz: mvhd v1 (64-bit duration) parsed without overflow", () => {
   const payload = new Uint8Array(120);
   const view = new DataView(payload.buffer);
   payload[0] = 1;              // version 1
-  view.setUint32(28, 1000);    // timescale
-  view.setUint32(32, 0);       // durHi
-  view.setUint32(36, 60_000);  // durLo → 60s
+  view.setUint32(20, 1000);    // timescale
+  view.setUint32(24, 0);       // durHi
+  view.setUint32(28, 60_000);  // durLo → 60s
   const moov = box("moov", box("mvhd", payload));
   const d = parseMp4DurationSeconds(moov);
   assertEquals(d, 60);
@@ -143,9 +143,9 @@ Deno.test("fuzz: mvhd v1 with huge 64-bit duration stays finite", () => {
   const payload = new Uint8Array(120);
   const view = new DataView(payload.buffer);
   payload[0] = 1;
-  view.setUint32(28, 1);              // timescale=1
-  view.setUint32(32, 0xffffffff);     // durHi max
-  view.setUint32(36, 0xffffffff);     // durLo max
+  view.setUint32(20, 1);              // timescale=1
+  view.setUint32(24, 0xffffffff);     // durHi max
+  view.setUint32(28, 0xffffffff);     // durLo max
   const moov = box("moov", box("mvhd", payload));
   const d = parseMp4DurationSeconds(moov);
   assert(Number.isFinite(d));
