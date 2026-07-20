@@ -35,6 +35,51 @@ export type Database = {
         }
         Relationships: []
       }
+      project_share_recipients: {
+        Row: {
+          created_at: string
+          id: string
+          invited_by: string | null
+          last_notified_at: string | null
+          project_id: string
+          recipient_email: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          invited_by?: string | null
+          last_notified_at?: string | null
+          project_id: string
+          recipient_email: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          invited_by?: string | null
+          last_notified_at?: string | null
+          project_id?: string
+          recipient_email?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_share_recipients_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_share_recipients_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "shared_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           avatar: Json | null

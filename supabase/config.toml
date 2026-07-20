@@ -17,3 +17,6 @@ verify_jwt = true
 
 [functions.generate-voice-dialogue]
 verify_jwt = true
+
+[functions.notify-share-change]
+verify_jwt = true

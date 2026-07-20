@@ -95,7 +95,19 @@ export const ShareProjectDialog = ({
       setToken(newToken);
       setEnabled(true);
       onShareUpdate?.(newToken, true);
-      toast.success("Share link rotated — previous link no longer works");
+
+      // Notify previously invited recipients of the new link.
+      const newShareUrl = `${window.location.origin}/shared/${newToken}`;
+      const { data: notifyRes } = await supabase.functions.invoke(
+        "notify-share-change",
+        { body: { projectId, changeType: "rotated", newShareUrl } },
+      );
+      const sent = (notifyRes as { sent?: number } | null)?.sent ?? 0;
+      toast.success(
+        sent > 0
+          ? `Share link rotated — ${sent} recipient${sent === 1 ? "" : "s"} notified`
+          : "Share link rotated — previous link no longer works",
+      );
     } catch (error: any) {
       console.error("Error rotating link:", error);
       toast.error("Failed to rotate share link");
@@ -108,6 +120,12 @@ export const ShareProjectDialog = ({
   const handleRevoke = async () => {
     setIsLoading(true);
     try {
+      // Notify BEFORE deleting recipients (revoke path clears them server-side).
+      const { data: notifyRes } = await supabase.functions.invoke(
+        "notify-share-change",
+        { body: { projectId, changeType: "revoked" } },
+      );
+
       const { error } = await supabase
         .from("projects")
         .update({ share_enabled: false, share_token: null })
@@ -118,7 +136,12 @@ export const ShareProjectDialog = ({
       setEnabled(false);
       setToken(null);
       onShareUpdate?.(null, false);
-      toast.success("Access revoked — all previous share links are now invalid");
+      const sent = (notifyRes as { sent?: number } | null)?.sent ?? 0;
+      toast.success(
+        sent > 0
+          ? `Access revoked — ${sent} recipient${sent === 1 ? "" : "s"} notified`
+          : "Access revoked — all previous share links are now invalid",
+      );
     } catch (error: any) {
       console.error("Error revoking access:", error);
       toast.error("Failed to revoke access");
