@@ -20,6 +20,7 @@ interface EmailShareDialogProps {
   onOpenChange: (open: boolean) => void;
   videoUrl: string;
   videoTitle: string;
+  projectId?: string;
 }
 
 export const EmailShareDialog = ({
@@ -27,6 +28,7 @@ export const EmailShareDialog = ({
   onOpenChange,
   videoUrl,
   videoTitle,
+  projectId,
 }: EmailShareDialogProps) => {
   const [recipientEmail, setRecipientEmail] = useState("");
   const [senderName, setSenderName] = useState("");
@@ -48,7 +50,7 @@ export const EmailShareDialog = ({
     setIsSending(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke("send-share-email", {
+      const { error } = await supabase.functions.invoke("send-share-email", {
         body: {
           recipientEmail,
           senderName,
@@ -58,8 +60,22 @@ export const EmailShareDialog = ({
         },
       });
 
-      if (error) {
-        throw error;
+      if (error) throw error;
+
+      // Record this recipient so we can notify them if the share link
+      // is later rotated or revoked. Ignore duplicates via upsert.
+      if (projectId) {
+        const { data: userRes } = await supabase.auth.getUser();
+        await supabase
+          .from("project_share_recipients")
+          .upsert(
+            {
+              project_id: projectId,
+              recipient_email: recipientEmail.toLowerCase().trim(),
+              invited_by: userRes.user?.id ?? null,
+            },
+            { onConflict: "project_id,recipient_email" },
+          );
       }
 
       toast.success(`Video shared with ${recipientEmail}!`);
